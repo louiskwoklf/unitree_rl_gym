@@ -38,7 +38,7 @@ class BruceRoughCfg(LeggedRobotCfg):
         friction_range = [0.2, 1.25]
         randomize_base_mass = True
         added_mass_range = [-0.15, 0.5]
-        push_robots = True
+        push_robots = False
         push_interval_s = 5
         max_push_vel_xy = 0.8
 
@@ -73,7 +73,7 @@ class BruceRoughCfg(LeggedRobotCfg):
         # Bruce's toe/heel spheres are collision shapes inside the ankle links,
         # so the foot bodies exposed to Isaac Gym are the ankle links.
         foot_name = "ankle_pitch_link"
-        penalize_contacts_on = ["hip", "knee", "shoulder", "elbow"]
+        penalize_contacts_on = ["hip", "knee"]#, "shoulder", "elbow"]
         terminate_after_contacts_on = ["base_link"]
         self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
         flip_visual_attachments = False
@@ -82,6 +82,7 @@ class BruceRoughCfg(LeggedRobotCfg):
         soft_dof_pos_limit = 0.9
         base_height_target = 0.47
         max_contact_force = 60.0
+        only_positive_rewards = True
 
         class scales(LeggedRobotCfg.rewards.scales):
             tracking_lin_vel = 1.0
@@ -90,15 +91,15 @@ class BruceRoughCfg(LeggedRobotCfg):
             ang_vel_xy = -0.05
             orientation = -1.0
             base_height = -10.0
-            dof_acc = -2.5e-7
-            dof_vel = -1e-3
+            dof_acc = 0.0#-2.5e-7
+            dof_vel = 0.0#-1e-3
             feet_air_time = 0.0
-            collision = -0.5
-            action_rate = -0.01
+            collision = -0.1#-0.5
+            action_rate = -0.005#-0.01
             dof_pos_limits = -5.0
             alive = 0.15
-            hip_pos = -1.0
-            arm_pos = -0.15
+            hip_pos = -0.5#-1.0
+            arm_pos = -0.05#-0.15
             contact_no_vel = -0.2
             feet_swing_height = -20.0
             contact = 0.18
