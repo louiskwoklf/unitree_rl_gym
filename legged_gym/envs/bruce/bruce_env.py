@@ -80,7 +80,7 @@ class BruceRobot(LeggedRobot):
         self.phase_left = self.phase
         self.phase_right = (self.phase + offset) % 1
         self.leg_phase = torch.cat(
-            [self.phase_left.unsqueeze(1), self.phase_right.unsqueeze(1)], dim=-1
+            [self.phase_right.unsqueeze(1), self.phase_left.unsqueeze(1)], dim=-1
         )
 
         return super()._post_physics_step_callback()

@@ -3,24 +3,27 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 
 class BruceRoughCfg(LeggedRobotCfg):
     class init_state(LeggedRobotCfg.init_state):
-        pos = [0.0, 0.0, 0.50]  # x,y,z [m]
+        pos = [0.0, 0.0, 0.43]  # x,y,z [m]
         default_joint_angles = {
-            "hip_yaw_r": 0.0,
-            "hip_pitch_r": 0.25,
-            "hip_roll_r": 0.0,
-            "knee_pitch_r": -0.45,
-            "ankle_pitch_r": 0.20,
-            "hip_yaw_l": 0.0,
-            "hip_pitch_l": 0.25,
-            "hip_roll_l": 0.0,
-            "knee_pitch_l": -0.45,
-            "ankle_pitch_l": 0.20,
-            "shoulder_pitch_r": 0.0,
-            "shoulder_roll_r": 0.0,
-            "elbow_pitch_r": 0.0,
-            "shoulder_pitch_l": 0.0,
-            "shoulder_roll_l": 0.0,
-            "elbow_pitch_l": 0.0,
+            "hip_yaw_r": -0.008243,
+            "hip_pitch_r": 0.469268,
+            "hip_roll_r": 0.018225,
+            "knee_pitch_r": -0.947148,
+            "ankle_pitch_r": 0.477813,
+
+            "hip_yaw_l": 0.008243,
+            "hip_pitch_l": 0.469268,
+            "hip_roll_l": -0.018225,
+            "knee_pitch_l": -0.947148,
+            "ankle_pitch_l": 0.477813,
+
+            "shoulder_pitch_r": -0.7,
+            "shoulder_roll_r": 1.3,
+            "elbow_pitch_r": 2.0,
+
+            "shoulder_pitch_l": 0.7,
+            "shoulder_roll_l": -1.3,
+            "elbow_pitch_l": -2.0,
         }
 
     class env(LeggedRobotCfg.env):
@@ -42,24 +45,24 @@ class BruceRoughCfg(LeggedRobotCfg):
     class control(LeggedRobotCfg.control):
         control_type = "P"
         stiffness = {
-            "hip_yaw": 80,
-            "hip_pitch": 100,
-            "hip_roll": 80,
-            "knee": 120,
-            "ankle": 40,
-            "shoulder_pitch": 40,
-            "shoulder_roll": 30,
-            "elbow": 20,
+            "hip_yaw": 7.0,#80,
+            "hip_pitch": 7.0,#100,
+            "hip_roll": 10.0,#80,
+            "knee": 10.0,#120,
+            "ankle": 1.5,#40,
+            "shoulder_pitch": 3.0,#40,
+            "shoulder_roll": 2.5,#30,
+            "elbow": 2.0,#20,
         }  # [N*m/rad]
         damping = {
-            "hip_yaw": 2.0,
-            "hip_pitch": 2.5,
-            "hip_roll": 2.0,
-            "knee": 3.0,
-            "ankle": 1.5,
-            "shoulder_pitch": 1.0,
-            "shoulder_roll": 1.0,
-            "elbow": 0.8,
+            "hip_yaw": 0.2,#2.0,
+            "hip_pitch": 0.2,#2.5,
+            "hip_roll": 0.4,#2.0,
+            "knee": 0.4,#3.0,
+            "ankle": 0.08,#1.5,
+            "shoulder_pitch": 0.12,#1.0,
+            "shoulder_roll": 0.10,#1.0,
+            "elbow": 0.08,#0.8,
         }  # [N*m*s/rad]
         action_scale = 0.25
         decimation = 4
