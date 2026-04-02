@@ -7,12 +7,12 @@ from legged_gym.envs.base.legged_robot import LeggedRobot
 
 
 class BruceRobot(LeggedRobot):
-    def step(self, actions):
-        # Keep the frozen arm joints consistent everywhere: torques,
-        # observations, and smoothness penalties should all see zero arm action.
+    def _compute_torques(self, actions):
+        # For locomotion-first training, keep the arms parked at their nominal
+        # pose so the policy can spend its capacity on the legs.
         effective_actions = actions.clone()
         effective_actions[:, self.arm_indices] = 0.0
-        return super().step(effective_actions)
+        return super()._compute_torques(effective_actions)
 
     def _reset_dofs(self, env_ids):
         if len(env_ids) == 0:
@@ -131,6 +131,8 @@ class BruceRobot(LeggedRobot):
     def compute_observations(self):
         sin_phase = torch.sin(2 * np.pi * self.phase).unsqueeze(1)
         cos_phase = torch.cos(2 * np.pi * self.phase).unsqueeze(1)
+        effective_actions = self.actions.clone()
+        effective_actions[:, self.arm_indices] = 0.0
         self.obs_buf = torch.cat(
             (
                 self.base_ang_vel * self.obs_scales.ang_vel,
@@ -138,7 +140,7 @@ class BruceRobot(LeggedRobot):
                 self.commands[:, :3] * self.commands_scale,
                 (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                 self.dof_vel * self.obs_scales.dof_vel,
-                self.actions,
+                effective_actions,
                 sin_phase,
                 cos_phase,
             ),
@@ -152,7 +154,7 @@ class BruceRobot(LeggedRobot):
                 self.commands[:, :3] * self.commands_scale,
                 (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                 self.dof_vel * self.obs_scales.dof_vel,
-                self.actions,
+                effective_actions,
                 sin_phase,
                 cos_phase,
             ),

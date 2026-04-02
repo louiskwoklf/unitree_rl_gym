@@ -59,21 +59,21 @@ class BruceRoughCfg(LeggedRobotCfg):
     class control(LeggedRobotCfg.control):
         control_type = "P"
         stiffness = {
-            "hip_yaw": 50.0,
-            "hip_pitch": 60.0,
-            "hip_roll": 60.0,
-            "knee": 75.0,
-            "ankle": 28.0,
+            "hip_yaw": 40.0,
+            "hip_pitch": 50.0,
+            "hip_roll": 50.0,
+            "knee": 60.0,
+            "ankle": 20.0,
             "shoulder_pitch": 20.0,
             "shoulder_roll": 20.0,
             "elbow": 12.0,
         }  # [N*m/rad]
         damping = {
-            "hip_yaw": 1.5,
-            "hip_pitch": 2.2,
-            "hip_roll": 2.2,
-            "knee": 3.0,
-            "ankle": 1.4,
+            "hip_yaw": 1.0,
+            "hip_pitch": 1.5,
+            "hip_roll": 1.5,
+            "knee": 2.0,
+            "ankle": 0.8,
             "shoulder_pitch": 0.6,
             "shoulder_roll": 0.6,
             "elbow": 0.4,
@@ -100,7 +100,7 @@ class BruceRoughCfg(LeggedRobotCfg):
 
         class scales(LeggedRobotCfg.rewards.scales):
             tracking_lin_vel = 1.0
-            tracking_ang_vel = 0.75
+            tracking_ang_vel = 0.5
             lin_vel_z = -2.0
             ang_vel_xy = -0.05
             orientation = -1.0
