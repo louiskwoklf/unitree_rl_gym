@@ -7,6 +7,42 @@ from legged_gym.envs.base.legged_robot import LeggedRobot
 
 
 class BruceRobot(LeggedRobot):
+    def _reset_dofs(self, env_ids):
+        if len(env_ids) == 0:
+            return
+
+        # Bruce's nominal stance is compact enough that the base class
+        # 0.5x..1.5x multiplicative reset knocks the feet into the ground or
+        # leaves them hanging above it. Start close to the calibrated pose.
+        self.dof_pos[env_ids] = self.default_dof_pos
+        self.dof_vel[env_ids] = 0.0
+
+        env_ids_int32 = env_ids.to(dtype=torch.int32)
+        self.gym.set_dof_state_tensor_indexed(
+            self.sim,
+            gymtorch.unwrap_tensor(self.dof_state),
+            gymtorch.unwrap_tensor(env_ids_int32),
+            len(env_ids_int32),
+        )
+
+    def _reset_root_states(self, env_ids):
+        if len(env_ids) == 0:
+            return
+
+        # Bruce also needs quiet resets. The shared base class injects random
+        # root velocity, which is large for this small robot and soft controller.
+        self.root_states[env_ids] = self.base_init_state
+        self.root_states[env_ids, :3] += self.env_origins[env_ids]
+        self.root_states[env_ids, 7:13] = 0.0
+
+        env_ids_int32 = env_ids.to(dtype=torch.int32)
+        self.gym.set_actor_root_state_tensor_indexed(
+            self.sim,
+            gymtorch.unwrap_tensor(self.root_states),
+            gymtorch.unwrap_tensor(env_ids_int32),
+            len(env_ids_int32),
+        )
+
     def _get_noise_scale_vec(self, cfg):
         """Sets a noise vector that matches Bruce's custom observation layout."""
         noise_vec = torch.zeros_like(self.obs_buf[0])

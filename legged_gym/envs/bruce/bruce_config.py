@@ -45,24 +45,24 @@ class BruceRoughCfg(LeggedRobotCfg):
     class control(LeggedRobotCfg.control):
         control_type = "P"
         stiffness = {
-            "hip_yaw": 7.0,#80,
-            "hip_pitch": 7.0,#100,
-            "hip_roll": 10.0,#80,
-            "knee": 10.0,#120,
-            "ankle": 1.5,#40,
-            "shoulder_pitch": 3.0,#40,
-            "shoulder_roll": 2.5,#30,
-            "elbow": 2.0,#20,
+            "hip_yaw": 40.0,
+            "hip_pitch": 50.0,
+            "hip_roll": 50.0,
+            "knee": 60.0,
+            "ankle": 20.0,
+            "shoulder_pitch": 20.0,
+            "shoulder_roll": 20.0,
+            "elbow": 12.0,
         }  # [N*m/rad]
         damping = {
-            "hip_yaw": 0.2,#2.0,
-            "hip_pitch": 0.2,#2.5,
-            "hip_roll": 0.4,#2.0,
-            "knee": 0.4,#3.0,
-            "ankle": 0.08,#1.5,
-            "shoulder_pitch": 0.12,#1.0,
-            "shoulder_roll": 0.10,#1.0,
-            "elbow": 0.08,#0.8,
+            "hip_yaw": 1.0,
+            "hip_pitch": 1.5,
+            "hip_roll": 1.5,
+            "knee": 2.0,
+            "ankle": 0.8,
+            "shoulder_pitch": 0.6,
+            "shoulder_roll": 0.6,
+            "elbow": 0.4,
         }  # [N*m*s/rad]
         action_scale = 0.25
         decimation = 4
@@ -80,7 +80,7 @@ class BruceRoughCfg(LeggedRobotCfg):
 
     class rewards(LeggedRobotCfg.rewards):
         soft_dof_pos_limit = 0.9
-        base_height_target = 0.47
+        base_height_target = 0.43
         max_contact_force = 60.0
         only_positive_rewards = True
 
