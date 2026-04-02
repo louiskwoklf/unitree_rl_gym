@@ -7,12 +7,23 @@ from legged_gym.envs.base.legged_robot import LeggedRobot
 
 
 class BruceRobot(LeggedRobot):
-    def _compute_torques(self, actions):
-        # For locomotion-first training, keep the arms parked at their nominal
-        # pose so the policy can spend its capacity on the legs.
+    @staticmethod
+    def _format_body_names(body_names):
+        return ", ".join(body_names) if body_names else "<none>"
+
+    def _sanitize_actions(self, actions):
         effective_actions = actions.clone()
-        effective_actions[:, self.arm_indices] = 0.0
-        return super()._compute_torques(effective_actions)
+        effective_actions[:, self.arm_action_indices] = 0.0
+        return effective_actions
+
+    def step(self, actions):
+        # Keep frozen-arm training structurally consistent by zeroing arm
+        # channels before the shared base class stores action history, builds
+        # previous-action observations, or computes action-rate penalties.
+        return super().step(self._sanitize_actions(actions))
+
+    def _compute_torques(self, actions):
+        return super()._compute_torques(self._sanitize_actions(actions))
 
     def _reset_dofs(self, env_ids):
         if len(env_ids) == 0:
@@ -107,6 +118,84 @@ class BruceRobot(LeggedRobot):
             dtype=torch.long,
             device=self.device,
         )
+        self.arm_action_indices = self.arm_indices.detach().cpu().tolist()
+        self.collision_debug_enabled = bool(getattr(self.cfg.env, "collision_debug", False))
+        self.collision_debug_interval = max(
+            1, int(getattr(self.cfg.env, "collision_debug_interval", 200))
+        )
+        self.collision_debug_top_k = max(
+            1, int(getattr(self.cfg.env, "collision_debug_top_k", 4))
+        )
+        num_penalized_bodies = len(self.penalised_contact_indices)
+        self.collision_debug_contact_counts = torch.zeros(
+            num_penalized_bodies,
+            dtype=torch.long,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.collision_debug_peak_forces = torch.zeros(
+            num_penalized_bodies,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
+        self._log_collision_body_matches()
+
+    def _log_collision_body_matches(self):
+        print(
+            f"[BruceRobot] foot_name='{self.cfg.asset.foot_name}' -> "
+            f"{self._format_body_names(self.feet_body_names)}"
+        )
+        print(
+            f"[BruceRobot] penalize_contacts_on={self.cfg.asset.penalize_contacts_on} -> "
+            f"{self._format_body_names(self.penalized_contact_body_names)}"
+        )
+        print(
+            "[BruceRobot] terminate_after_contacts_on="
+            f"{self.cfg.asset.terminate_after_contacts_on} -> "
+            f"{self._format_body_names(self.termination_contact_body_names)}"
+        )
+
+    def _update_collision_debug(self):
+        if not self.collision_debug_enabled or len(self.penalised_contact_indices) == 0:
+            return
+
+        penalized_contact_forces = torch.norm(
+            self.contact_forces[:, self.penalised_contact_indices, :], dim=-1
+        )
+        penalized_contacts = penalized_contact_forces > 0.1
+        self.collision_debug_contact_counts += penalized_contacts.sum(dim=0).to(torch.long)
+        self.collision_debug_peak_forces = torch.maximum(
+            self.collision_debug_peak_forces,
+            penalized_contact_forces.max(dim=0).values,
+        )
+
+        if self.common_step_counter % self.collision_debug_interval != 0:
+            return
+
+        total_hits = int(self.collision_debug_contact_counts.sum().item())
+        if total_hits > 0:
+            ranked_body_ids = torch.argsort(
+                self.collision_debug_contact_counts, descending=True
+            )
+            debug_lines = []
+            for body_id in ranked_body_ids[: self.collision_debug_top_k].tolist():
+                body_hits = int(self.collision_debug_contact_counts[body_id].item())
+                if body_hits == 0:
+                    break
+                peak_force = float(self.collision_debug_peak_forces[body_id].item())
+                debug_lines.append(
+                    f"{self.penalized_contact_body_names[body_id]}: "
+                    f"hits={body_hits}, peak_force={peak_force:.2f}"
+                )
+            if debug_lines:
+                print(
+                    f"[BruceRobot][collision_debug step={self.common_step_counter}] "
+                    + "; ".join(debug_lines)
+                )
+
+        self.collision_debug_contact_counts.zero_()
+        self.collision_debug_peak_forces.zero_()
 
     def update_feet_state(self):
         self.gym.refresh_rigid_body_state_tensor(self.sim)
@@ -116,6 +205,7 @@ class BruceRobot(LeggedRobot):
 
     def _post_physics_step_callback(self):
         self.update_feet_state()
+        self._update_collision_debug()
 
         period = 0.8
         offset = 0.5
@@ -131,8 +221,6 @@ class BruceRobot(LeggedRobot):
     def compute_observations(self):
         sin_phase = torch.sin(2 * np.pi * self.phase).unsqueeze(1)
         cos_phase = torch.cos(2 * np.pi * self.phase).unsqueeze(1)
-        effective_actions = self.actions.clone()
-        effective_actions[:, self.arm_indices] = 0.0
         self.obs_buf = torch.cat(
             (
                 self.base_ang_vel * self.obs_scales.ang_vel,
@@ -140,7 +228,7 @@ class BruceRobot(LeggedRobot):
                 self.commands[:, :3] * self.commands_scale,
                 (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                 self.dof_vel * self.obs_scales.dof_vel,
-                effective_actions,
+                self.actions,
                 sin_phase,
                 cos_phase,
             ),
@@ -154,7 +242,7 @@ class BruceRobot(LeggedRobot):
                 self.commands[:, :3] * self.commands_scale,
                 (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                 self.dof_vel * self.obs_scales.dof_vel,
-                effective_actions,
+                self.actions,
                 sin_phase,
                 cos_phase,
             ),
