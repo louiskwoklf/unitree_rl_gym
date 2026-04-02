@@ -33,11 +33,25 @@ class BruceRoughCfg(LeggedRobotCfg):
         num_privileged_obs = 62
         num_actions = 16
 
+    class commands(LeggedRobotCfg.commands):
+        curriculum = True
+        max_curriculum = 0.8
+        heading_command = True
+
+        class ranges(LeggedRobotCfg.commands.ranges):
+            # Start with mostly forward walking and small turn/lateral demands.
+            # Bruce can expand lin_vel_x through the built-in curriculum once
+            # it is tracking reliably.
+            lin_vel_x = [0.0, 0.6]
+            lin_vel_y = [-0.1, 0.1]
+            ang_vel_yaw = [-0.5, 0.5]
+            heading = [-0.5, 0.5]
+
     class domain_rand(LeggedRobotCfg.domain_rand):
         randomize_friction = True
-        friction_range = [0.2, 1.25]
-        randomize_base_mass = True
-        added_mass_range = [-0.15, 0.5]
+        friction_range = [0.5, 1.25]
+        randomize_base_mass = False
+        added_mass_range = [0.0, 0.0]
         push_robots = False
         push_interval_s = 5
         max_push_vel_xy = 0.8
