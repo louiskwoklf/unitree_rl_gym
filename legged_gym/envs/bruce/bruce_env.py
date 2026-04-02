@@ -11,19 +11,20 @@ class BruceRobot(LeggedRobot):
     def _format_body_names(body_names):
         return ", ".join(body_names) if body_names else "<none>"
 
-    def _sanitize_actions(self, actions):
-        effective_actions = actions.clone()
-        effective_actions[:, self.arm_action_indices] = 0.0
-        return effective_actions
-
-    def step(self, actions):
-        # Keep frozen-arm training structurally consistent by zeroing arm
-        # channels before the shared base class stores action history, builds
-        # previous-action observations, or computes action-rate penalties.
-        return super().step(self._sanitize_actions(actions))
+    def _expand_leg_actions(self, actions):
+        full_actions = torch.zeros(
+            actions.shape[0],
+            self.num_dof,
+            dtype=actions.dtype,
+            device=actions.device,
+        )
+        full_actions[:, self.leg_indices] = actions
+        return full_actions
 
     def _compute_torques(self, actions):
-        return super()._compute_torques(self._sanitize_actions(actions))
+        # Bruce locomotion-first training exposes only the 10 leg joints to the
+        # policy. Arms are held at their nominal pose with zero action offset.
+        return super()._compute_torques(self._expand_leg_actions(actions))
 
     def _reset_dofs(self, env_ids):
         if len(env_ids) == 0:
@@ -68,17 +69,22 @@ class BruceRobot(LeggedRobot):
         noise_scales = self.cfg.noise.noise_scales
         noise_level = self.cfg.noise.noise_level
 
+        dof_pos_start = 9
+        dof_vel_start = dof_pos_start + self.num_dof
+        action_start = dof_vel_start + self.num_dof
+        phase_start = action_start + self.num_actions
+
         noise_vec[:3] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
         noise_vec[3:6] = noise_scales.gravity * noise_level
         noise_vec[6:9] = 0.0
-        noise_vec[9 : 9 + self.num_actions] = (
+        noise_vec[dof_pos_start:dof_vel_start] = (
             noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
         )
-        noise_vec[9 + self.num_actions : 9 + 2 * self.num_actions] = (
+        noise_vec[dof_vel_start:action_start] = (
             noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
         )
-        noise_vec[9 + 2 * self.num_actions : 9 + 3 * self.num_actions] = 0.0
-        noise_vec[9 + 3 * self.num_actions : 9 + 3 * self.num_actions + 2] = 0.0
+        noise_vec[action_start:phase_start] = 0.0
+        noise_vec[phase_start:phase_start + 2] = 0.0
         return noise_vec
 
     def _init_foot(self):
@@ -106,6 +112,22 @@ class BruceRobot(LeggedRobot):
             dtype=torch.long,
             device=self.device,
         )
+        self.leg_indices = torch.tensor(
+            [
+                name_to_index["hip_yaw_r"],
+                name_to_index["hip_pitch_r"],
+                name_to_index["hip_roll_r"],
+                name_to_index["knee_pitch_r"],
+                name_to_index["ankle_pitch_r"],
+                name_to_index["hip_yaw_l"],
+                name_to_index["hip_pitch_l"],
+                name_to_index["hip_roll_l"],
+                name_to_index["knee_pitch_l"],
+                name_to_index["ankle_pitch_l"],
+            ],
+            dtype=torch.long,
+            device=self.device,
+        )
         self.arm_indices = torch.tensor(
             [
                 name_to_index["shoulder_pitch_r"],
@@ -118,7 +140,6 @@ class BruceRobot(LeggedRobot):
             dtype=torch.long,
             device=self.device,
         )
-        self.arm_action_indices = self.arm_indices.detach().cpu().tolist()
         self.collision_debug_enabled = bool(getattr(self.cfg.env, "collision_debug", False))
         self.collision_debug_interval = max(
             1, int(getattr(self.cfg.env, "collision_debug_interval", 200))
@@ -221,6 +242,8 @@ class BruceRobot(LeggedRobot):
     def compute_observations(self):
         sin_phase = torch.sin(2 * np.pi * self.phase).unsqueeze(1)
         cos_phase = torch.cos(2 * np.pi * self.phase).unsqueeze(1)
+        # Keep full proprioception, including passive arm state, but expose
+        # only the 10 policy-controlled leg actions in the action-history slot.
         self.obs_buf = torch.cat(
             (
                 self.base_ang_vel * self.obs_scales.ang_vel,

@@ -27,11 +27,11 @@ class BruceRoughCfg(LeggedRobotCfg):
         }
 
     class env(LeggedRobotCfg.env):
-        # 3 + 3 + 3 + 16 + 16 + 16 + 2
-        num_observations = 59
-        # 3 + 3 + 3 + 3 + 16 + 16 + 16 + 2
-        num_privileged_obs = 62
-        num_actions = 16
+        # 3 + 3 + 3 + 16 + 16 + 10 + 2
+        num_observations = 53
+        # 3 + 3 + 3 + 3 + 16 + 16 + 10 + 2
+        num_privileged_obs = 56
+        num_actions = 10
         collision_debug = False
         collision_debug_interval = 200
         collision_debug_top_k = 4
