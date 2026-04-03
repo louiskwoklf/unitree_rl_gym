@@ -349,6 +349,24 @@ class BruceRobot(LeggedRobot):
         self.airborne_time[grounded] = 0.0
         self.jump_peak_height[grounded] = base_height[grounded]
 
+    def _jump_vertical_factor(self):
+        horizontal_speed_sq = torch.sum(torch.square(self.base_lin_vel[:, :2]), dim=1)
+        horizontal_drift_sq = torch.sum(
+            torch.square(self.root_states[:, :2] - self.env_origins[:, :2]),
+            dim=1,
+        )
+        foot_height_diff_sq = torch.square(self.feet_pos[:, 0, 2] - self.feet_pos[:, 1, 2])
+
+        speed_scale = max(float(self.cfg.rewards.max_horizontal_speed), 1e-3) ** 2
+        drift_scale = max(float(self.cfg.rewards.max_horizontal_displacement), 1e-3) ** 2
+        foot_scale = max(float(self.cfg.rewards.max_foot_height_diff), 1e-3) ** 2
+
+        return torch.exp(
+            -horizontal_speed_sq / speed_scale
+            -horizontal_drift_sq / drift_scale
+            -foot_height_diff_sq / foot_scale
+        )
+
     def _post_physics_step_callback(self):
         self.update_feet_state()
         self._update_collision_debug()
@@ -385,9 +403,10 @@ class BruceRobot(LeggedRobot):
     def _reward_jump_takeoff(self):
         takeoff_target = max(float(self.cfg.rewards.takeoff_velocity_target), 1e-3)
         upward_speed = torch.clamp(self.base_lin_vel[:, 2], min=0.0)
-        return self.all_foot_contact.float() * torch.clamp(
-            upward_speed / takeoff_target,
-            max=1.0,
+        return (
+            self.all_foot_contact.float()
+            * torch.clamp(upward_speed / takeoff_target, max=1.0)
+            * self._jump_vertical_factor()
         )
 
     def _reward_jump_air(self):
@@ -395,9 +414,10 @@ class BruceRobot(LeggedRobot):
             self.root_states[:, 2] - self.standing_height_target,
             min=0.0,
         )
-        return self.airborne.float() * torch.clamp(
-            height_gain / self.jump_height_gain_target,
-            max=1.5,
+        return (
+            self.airborne.float()
+            * torch.clamp(height_gain / self.jump_height_gain_target, max=1.5)
+            * self._jump_vertical_factor()
         )
 
     def _reward_jump_height(self):
@@ -405,13 +425,29 @@ class BruceRobot(LeggedRobot):
             self.last_jump_peak_height - self.standing_height_target,
             min=0.0,
         )
-        return self.valid_jump.float() * torch.clamp(
-            height_gain / self.jump_height_gain_target,
-            max=1.5,
+        return (
+            self.valid_jump.float()
+            * torch.clamp(height_gain / self.jump_height_gain_target, max=1.5)
+            * self._jump_vertical_factor()
         )
 
     def _reward_horizontal_drift(self):
         return torch.sum(torch.square(self.base_lin_vel[:, :2]), dim=1)
+
+    def _reward_horizontal_position(self):
+        return torch.sum(
+            torch.square(self.root_states[:, :2] - self.env_origins[:, :2]),
+            dim=1,
+        )
+
+    def _reward_feet_symmetry(self):
+        return torch.square(self.feet_pos[:, 0, 2] - self.feet_pos[:, 1, 2])
+
+    def _reward_contact_balance(self):
+        return torch.logical_xor(
+            self.feet_contact[:, 0],
+            self.feet_contact[:, 1],
+        ).float()
 
     def _reward_yaw_rate(self):
         return torch.square(self.base_ang_vel[:, 2])

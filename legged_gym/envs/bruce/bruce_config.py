@@ -102,8 +102,11 @@ class BruceRoughCfg(LeggedRobotCfg):
         takeoff_velocity_target = 0.9
         min_jump_air_time = 0.06
         min_jump_height = 0.05
+        max_horizontal_speed = 0.15
+        max_horizontal_displacement = 0.06
+        max_foot_height_diff = 0.03
         max_contact_force = 60.0
-        only_positive_rewards = True
+        only_positive_rewards = False
 
         class scales(LeggedRobotCfg.rewards.scales):
             termination = -5.0
@@ -119,17 +122,20 @@ class BruceRoughCfg(LeggedRobotCfg):
             collision = -0.2
             action_rate = -0.01
             dof_pos_limits = -5.0
-            alive = 0.02
+            alive = 0.0
             hip_pos = -0.4
             arm_pos = -0.05
             contact_no_vel = 0.0
             feet_swing_height = 0.0
             contact = 0.0
-            jump_takeoff = 2.5
-            jump_air = 4.0
-            jump_height = 8.0
-            horizontal_drift = -1.0
-            yaw_rate = -0.1
+            jump_takeoff = 1.5
+            jump_air = 2.0
+            jump_height = 4.0
+            horizontal_drift = -6.0
+            horizontal_position = -8.0
+            feet_symmetry = -4.0
+            contact_balance = -2.0
+            yaw_rate = -0.3
 
 
 class BruceRoughCfgPPO(LeggedRobotCfgPPO):
