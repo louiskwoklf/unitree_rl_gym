@@ -293,6 +293,24 @@ class BruceRobot(LeggedRobot):
         ).clip(min=0.0)
         return torch.sum(torch.square(height_deficit) * swing_mask, dim=1)
 
+    def _reward_feet_air_time(self):
+        # The shared 0.5 s target is longer than Bruce's nominal swing window
+        # (~0.36 s at the current gait period), so it would not reward natural
+        # steps. Use a Bruce-specific target that rewards sustained aerial
+        # swing and makes brief unload-reload taps unattractive.
+        contact = torch.norm(self.contact_forces[:, self.feet_indices, :3], dim=2) > 1.0
+        contact_filt = torch.logical_or(contact, self.last_contacts)
+        self.last_contacts = contact
+        first_contact = (self.feet_air_time > 0.0) * contact_filt
+        self.feet_air_time += self.dt
+        rew_air_time = torch.sum(
+            (self.feet_air_time - self.cfg.rewards.swing_time_target) * first_contact,
+            dim=1,
+        )
+        rew_air_time *= torch.norm(self.commands[:, :2], dim=1) > 0.1
+        self.feet_air_time *= ~contact_filt
+        return rew_air_time
+
     def _reward_alive(self):
         return 1.0
 
