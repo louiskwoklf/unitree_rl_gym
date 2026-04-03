@@ -222,6 +222,12 @@ class BruceRobot(LeggedRobot):
             device=self.device,
             requires_grad=False,
         )
+        self.landing_reward_timer = torch.zeros(
+            self.num_envs,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
         self._log_collision_body_matches()
 
     def reset_idx(self, env_ids):
@@ -239,6 +245,7 @@ class BruceRobot(LeggedRobot):
         self.last_jump_peak_height[env_ids] = 0.0
         self.last_jump_air_time[env_ids] = 0.0
         self.valid_jump[env_ids] = False
+        self.landing_reward_timer[env_ids] = 0.0
 
     def _log_collision_body_matches(self):
         print(
@@ -311,6 +318,10 @@ class BruceRobot(LeggedRobot):
         raw_contact = torch.norm(self.contact_forces[:, self.feet_indices, :3], dim=2) > 1.0
         filtered_contact = torch.logical_or(raw_contact, self.prev_jump_contacts)
         self.prev_jump_contacts = raw_contact
+        self.landing_reward_timer = torch.clamp(
+            self.landing_reward_timer - self.dt,
+            min=0.0,
+        )
 
         was_airborne = self.airborne.clone()
         self.feet_contact = filtered_contact
@@ -344,6 +355,7 @@ class BruceRobot(LeggedRobot):
             self.valid_jump[landing] = (
                 self.last_jump_air_time[landing] >= self.cfg.rewards.min_jump_air_time
             ) & (height_gain >= self.cfg.rewards.min_jump_height)
+            self.landing_reward_timer[landing] = self.cfg.rewards.landing_reward_window_s
 
         grounded = ~self.airborne
         self.airborne_time[grounded] = 0.0
@@ -366,6 +378,18 @@ class BruceRobot(LeggedRobot):
             -horizontal_drift_sq / drift_scale
             -foot_height_diff_sq / foot_scale
         )
+
+    def _jump_posture_factor(self):
+        pitch_sq = torch.square(self.rpy[:, 1])
+        pitch_rate_sq = torch.square(self.base_ang_vel[:, 1])
+
+        angle_scale = max(float(self.cfg.rewards.max_pitch_angle), 1e-3) ** 2
+        rate_scale = max(float(self.cfg.rewards.max_pitch_rate), 1e-3) ** 2
+
+        return torch.exp(-pitch_sq / angle_scale - pitch_rate_sq / rate_scale)
+
+    def _jump_quality_factor(self):
+        return self._jump_vertical_factor() * self._jump_posture_factor()
 
     def _post_physics_step_callback(self):
         self.update_feet_state()
@@ -406,7 +430,7 @@ class BruceRobot(LeggedRobot):
         return (
             self.all_foot_contact.float()
             * torch.clamp(upward_speed / takeoff_target, max=1.0)
-            * self._jump_vertical_factor()
+            * self._jump_quality_factor()
         )
 
     def _reward_jump_air(self):
@@ -417,7 +441,7 @@ class BruceRobot(LeggedRobot):
         return (
             self.airborne.float()
             * torch.clamp(height_gain / self.jump_height_gain_target, max=1.5)
-            * self._jump_vertical_factor()
+            * self._jump_quality_factor()
         )
 
     def _reward_jump_height(self):
@@ -428,7 +452,7 @@ class BruceRobot(LeggedRobot):
         return (
             self.valid_jump.float()
             * torch.clamp(height_gain / self.jump_height_gain_target, max=1.5)
-            * self._jump_vertical_factor()
+            * self._jump_quality_factor()
         )
 
     def _reward_horizontal_drift(self):
@@ -448,6 +472,24 @@ class BruceRobot(LeggedRobot):
             self.feet_contact[:, 0],
             self.feet_contact[:, 1],
         ).float()
+
+    def _reward_pitch_angle(self):
+        return torch.square(self.rpy[:, 1])
+
+    def _reward_pitch_rate(self):
+        return torch.square(self.base_ang_vel[:, 1])
+
+    def _reward_landing_upright(self):
+        landing_mask = (self.landing_reward_timer > 0.0).float() * self.all_foot_contact.float()
+        roll_sq = torch.square(self.rpy[:, 0])
+        pitch_sq = torch.square(self.rpy[:, 1])
+        ang_vel_sq = torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
+        upright_score = torch.exp(
+            -4.0 * roll_sq
+            -6.0 * pitch_sq
+            -0.25 * ang_vel_sq
+        )
+        return landing_mask * upright_score
 
     def _reward_yaw_rate(self):
         return torch.square(self.base_ang_vel[:, 2])
