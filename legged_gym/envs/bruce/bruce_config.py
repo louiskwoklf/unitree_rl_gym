@@ -29,30 +29,28 @@ class BruceRoughCfg(LeggedRobotCfg):
     class env(LeggedRobotCfg.env):
         # 3 + 3 + 3 + 16 + 16 + 10 + 2
         num_observations = 53
-        # 3 + 3 + 3 + 3 + 16 + 16 + 10 + 2
+        # actor obs + 2 foot heights + base height
         num_privileged_obs = 56
         num_actions = 10
+        episode_length_s = 8.0
         collision_debug = False
         collision_debug_interval = 200
         collision_debug_top_k = 4
 
     class commands(LeggedRobotCfg.commands):
-        curriculum = True
-        max_curriculum = 0.8
-        heading_command = True
+        curriculum = False
+        max_curriculum = 0.0
+        heading_command = False
 
         class ranges(LeggedRobotCfg.commands.ranges):
-            # Start with mostly forward walking and small turn/lateral demands.
-            # Bruce can expand lin_vel_x through the built-in curriculum once
-            # it is tracking reliably.
-            lin_vel_x = [0.0, 0.6]
-            lin_vel_y = [-0.1, 0.1]
-            ang_vel_yaw = [-0.5, 0.5]
-            heading = [-0.5, 0.5]
+            lin_vel_x = [0.0, 0.0]
+            lin_vel_y = [0.0, 0.0]
+            ang_vel_yaw = [0.0, 0.0]
+            heading = [0.0, 0.0]
 
     class domain_rand(LeggedRobotCfg.domain_rand):
         randomize_friction = True
-        friction_range = [0.5, 1.25]
+        friction_range = [0.8, 1.25]
         randomize_base_mass = False
         added_mass_range = [0.0, 0.0]
         push_robots = False
@@ -81,7 +79,9 @@ class BruceRoughCfg(LeggedRobotCfg):
             "shoulder_roll": 0.6,
             "elbow": 0.4,
         }  # [N*m*s/rad]
-        action_scale = 0.25
+        # Walking used a narrow action range around the nominal stance.
+        # Jumping needs enough travel to crouch and then extend aggressively.
+        action_scale = 0.6
         decimation = 4
 
     class asset(LeggedRobotCfg.asset):
@@ -98,30 +98,38 @@ class BruceRoughCfg(LeggedRobotCfg):
     class rewards(LeggedRobotCfg.rewards):
         soft_dof_pos_limit = 0.9
         base_height_target = 0.43
+        jump_height_target = 0.55
+        takeoff_velocity_target = 0.9
+        min_jump_air_time = 0.06
+        min_jump_height = 0.05
         max_contact_force = 60.0
         only_positive_rewards = True
-        swing_foot_height_target = 0.08
-        swing_time_target = 0.22
 
         class scales(LeggedRobotCfg.rewards.scales):
-            tracking_lin_vel = 1.0
-            tracking_ang_vel = 0.5
-            lin_vel_z = -2.0
-            ang_vel_xy = -0.05
-            orientation = -1.0
-            base_height = -10.0
-            dof_acc = 0.0#-2.5e-7
-            dof_vel = 0.0#-1e-3
-            feet_air_time = 1.0
-            collision = -0.1#-0.5
+            termination = -5.0
+            tracking_lin_vel = 0.0
+            tracking_ang_vel = 0.0
+            lin_vel_z = 0.0
+            ang_vel_xy = -0.1
+            orientation = -2.0
+            base_height = 0.0
+            dof_acc = 0.0
+            dof_vel = 0.0
+            feet_air_time = 0.0
+            collision = -0.2
             action_rate = -0.01
             dof_pos_limits = -5.0
-            alive = 0.15
-            hip_pos = -0.5#-1.0
-            arm_pos = -0.05#-0.15
-            contact_no_vel = -0.2
-            feet_swing_height = -20.0
-            contact = 0.18
+            alive = 0.02
+            hip_pos = -0.4
+            arm_pos = -0.05
+            contact_no_vel = 0.0
+            feet_swing_height = 0.0
+            contact = 0.0
+            jump_takeoff = 2.5
+            jump_air = 4.0
+            jump_height = 8.0
+            horizontal_drift = -1.0
+            yaw_rate = -0.1
 
 
 class BruceRoughCfgPPO(LeggedRobotCfgPPO):

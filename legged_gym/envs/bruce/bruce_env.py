@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 
 from isaacgym import gymtorch
@@ -22,8 +21,9 @@ class BruceRobot(LeggedRobot):
         return full_actions
 
     def _compute_torques(self, actions):
-        # Bruce locomotion-first training exposes only the 10 leg joints to the
-        # policy. Arms are held at their nominal pose with zero action offset.
+        # Keep the action space focused on the legs for jump training. The arm
+        # joints stay at their nominal pose to reduce search-space noise while
+        # Bruce learns a symmetric crouch-push-land cycle.
         return super()._compute_torques(self._expand_leg_actions(actions))
 
     def _reset_dofs(self, env_ids):
@@ -72,19 +72,19 @@ class BruceRobot(LeggedRobot):
         dof_pos_start = 9
         dof_vel_start = dof_pos_start + self.num_dof
         action_start = dof_vel_start + self.num_dof
-        phase_start = action_start + self.num_actions
+        contact_start = action_start + self.num_actions
 
-        noise_vec[:3] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
-        noise_vec[3:6] = noise_scales.gravity * noise_level
-        noise_vec[6:9] = 0.0
+        noise_vec[:3] = noise_scales.lin_vel * noise_level * self.obs_scales.lin_vel
+        noise_vec[3:6] = noise_scales.ang_vel * noise_level * self.obs_scales.ang_vel
+        noise_vec[6:9] = noise_scales.gravity * noise_level
         noise_vec[dof_pos_start:dof_vel_start] = (
             noise_scales.dof_pos * noise_level * self.obs_scales.dof_pos
         )
         noise_vec[dof_vel_start:action_start] = (
             noise_scales.dof_vel * noise_level * self.obs_scales.dof_vel
         )
-        noise_vec[action_start:phase_start] = 0.0
-        noise_vec[phase_start:phase_start + 2] = 0.0
+        noise_vec[action_start:contact_start] = 0.0
+        noise_vec[contact_start:] = 0.0
         return noise_vec
 
     def _init_foot(self):
@@ -160,7 +160,85 @@ class BruceRobot(LeggedRobot):
             device=self.device,
             requires_grad=False,
         )
+        self.standing_height_target = float(self.cfg.rewards.base_height_target)
+        self.jump_height_gain_target = max(
+            float(self.cfg.rewards.jump_height_target) - self.standing_height_target,
+            1e-3,
+        )
+        self.prev_jump_contacts = torch.zeros(
+            self.num_envs,
+            self.feet_num,
+            dtype=torch.bool,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.feet_contact = torch.zeros_like(self.prev_jump_contacts)
+        self.any_foot_contact = torch.zeros(
+            self.num_envs,
+            dtype=torch.bool,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.all_foot_contact = torch.zeros(
+            self.num_envs,
+            dtype=torch.bool,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.airborne = torch.zeros(
+            self.num_envs,
+            dtype=torch.bool,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.airborne_time = torch.zeros(
+            self.num_envs,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.jump_peak_height = torch.full(
+            (self.num_envs,),
+            self.standing_height_target,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.last_jump_peak_height = torch.zeros(
+            self.num_envs,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.last_jump_air_time = torch.zeros(
+            self.num_envs,
+            dtype=torch.float,
+            device=self.device,
+            requires_grad=False,
+        )
+        self.valid_jump = torch.zeros(
+            self.num_envs,
+            dtype=torch.bool,
+            device=self.device,
+            requires_grad=False,
+        )
         self._log_collision_body_matches()
+
+    def reset_idx(self, env_ids):
+        if len(env_ids) == 0:
+            return
+
+        super().reset_idx(env_ids)
+        self.prev_jump_contacts[env_ids] = False
+        self.feet_contact[env_ids] = False
+        self.any_foot_contact[env_ids] = False
+        self.all_foot_contact[env_ids] = False
+        self.airborne[env_ids] = False
+        self.airborne_time[env_ids] = 0.0
+        self.jump_peak_height[env_ids] = self.standing_height_target
+        self.last_jump_peak_height[env_ids] = 0.0
+        self.last_jump_air_time[env_ids] = 0.0
+        self.valid_jump[env_ids] = False
 
     def _log_collision_body_matches(self):
         print(
@@ -224,92 +302,119 @@ class BruceRobot(LeggedRobot):
         self.feet_pos = self.feet_state[:, :, :3]
         self.feet_vel = self.feet_state[:, :, 7:10]
 
+    def _resample_commands(self, env_ids):
+        if len(env_ids) == 0:
+            return
+        self.commands[env_ids] = 0.0
+
+    def _update_jump_state(self):
+        raw_contact = torch.norm(self.contact_forces[:, self.feet_indices, :3], dim=2) > 1.0
+        filtered_contact = torch.logical_or(raw_contact, self.prev_jump_contacts)
+        self.prev_jump_contacts = raw_contact
+
+        was_airborne = self.airborne.clone()
+        self.feet_contact = filtered_contact
+        self.any_foot_contact = torch.any(filtered_contact, dim=1)
+        self.all_foot_contact = torch.all(filtered_contact, dim=1)
+        self.airborne = ~self.any_foot_contact
+
+        base_height = self.root_states[:, 2]
+        self.valid_jump.zero_()
+        self.last_jump_peak_height.zero_()
+        self.last_jump_air_time.zero_()
+
+        takeoff = self.airborne & ~was_airborne
+        if torch.any(takeoff):
+            self.airborne_time[takeoff] = 0.0
+            self.jump_peak_height[takeoff] = base_height[takeoff]
+
+        airborne_ids = self.airborne.nonzero(as_tuple=False).flatten()
+        if len(airborne_ids) > 0:
+            self.airborne_time[airborne_ids] += self.dt
+            self.jump_peak_height[airborne_ids] = torch.maximum(
+                self.jump_peak_height[airborne_ids],
+                base_height[airborne_ids],
+            )
+
+        landing = was_airborne & self.any_foot_contact
+        if torch.any(landing):
+            self.last_jump_peak_height[landing] = self.jump_peak_height[landing]
+            self.last_jump_air_time[landing] = self.airborne_time[landing]
+            height_gain = self.last_jump_peak_height[landing] - self.standing_height_target
+            self.valid_jump[landing] = (
+                self.last_jump_air_time[landing] >= self.cfg.rewards.min_jump_air_time
+            ) & (height_gain >= self.cfg.rewards.min_jump_height)
+
+        grounded = ~self.airborne
+        self.airborne_time[grounded] = 0.0
+        self.jump_peak_height[grounded] = base_height[grounded]
+
     def _post_physics_step_callback(self):
         self.update_feet_state()
         self._update_collision_debug()
-
-        period = 0.8
-        offset = 0.5
-        self.phase = (self.episode_length_buf * self.dt) % period / period
-        self.phase_left = self.phase
-        self.phase_right = (self.phase + offset) % 1
-        self.leg_phase = torch.cat(
-            [self.phase_right.unsqueeze(1), self.phase_left.unsqueeze(1)], dim=-1
-        )
+        self._update_jump_state()
 
         return super()._post_physics_step_callback()
 
     def compute_observations(self):
-        sin_phase = torch.sin(2 * np.pi * self.phase).unsqueeze(1)
-        cos_phase = torch.cos(2 * np.pi * self.phase).unsqueeze(1)
-        # Keep full proprioception, including passive arm state, but expose
-        # only the 10 policy-controlled leg actions in the action-history slot.
-        self.obs_buf = torch.cat(
-            (
-                self.base_ang_vel * self.obs_scales.ang_vel,
-                self.projected_gravity,
-                self.commands[:, :3] * self.commands_scale,
-                (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
-                self.dof_vel * self.obs_scales.dof_vel,
-                self.actions,
-                sin_phase,
-                cos_phase,
-            ),
-            dim=-1,
-        )
-        self.privileged_obs_buf = torch.cat(
+        foot_contact = self.feet_contact.float()
+        actor_obs = torch.cat(
             (
                 self.base_lin_vel * self.obs_scales.lin_vel,
                 self.base_ang_vel * self.obs_scales.ang_vel,
                 self.projected_gravity,
-                self.commands[:, :3] * self.commands_scale,
                 (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                 self.dof_vel * self.obs_scales.dof_vel,
                 self.actions,
-                sin_phase,
-                cos_phase,
+                foot_contact,
+            ),
+            dim=-1,
+        )
+        self.obs_buf = actor_obs
+        self.privileged_obs_buf = torch.cat(
+            (
+                actor_obs,
+                self.feet_pos[:, :, 2],
+                self.root_states[:, 2:3],
             ),
             dim=-1,
         )
         if self.add_noise:
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
 
-    def _reward_contact(self):
-        res = torch.zeros(self.num_envs, dtype=torch.float, device=self.device)
-        for i in range(self.feet_num):
-            is_stance = self.leg_phase[:, i] < 0.55
-            contact = self.contact_forces[:, self.feet_indices[i], 2] > 1
-            res += ~(contact ^ is_stance)
-        return res
-
-    def _reward_feet_swing_height(self):
-        # The old version only shaped feet that were already out of contact and
-        # used a very low 5 cm target, so brief ankle taps could satisfy swing
-        # phase with almost no real leg lift. Instead, require a minimum
-        # clearance throughout the commanded swing window.
-        swing_mask = (self.leg_phase >= 0.55).float()
-        height_deficit = (
-            self.cfg.rewards.swing_foot_height_target - self.feet_pos[:, :, 2]
-        ).clip(min=0.0)
-        return torch.sum(torch.square(height_deficit) * swing_mask, dim=1)
-
-    def _reward_feet_air_time(self):
-        # The shared 0.5 s target is longer than Bruce's nominal swing window
-        # (~0.36 s at the current gait period), so it would not reward natural
-        # steps. Use a Bruce-specific target that rewards sustained aerial
-        # swing and makes brief unload-reload taps unattractive.
-        contact = torch.norm(self.contact_forces[:, self.feet_indices, :3], dim=2) > 1.0
-        contact_filt = torch.logical_or(contact, self.last_contacts)
-        self.last_contacts = contact
-        first_contact = (self.feet_air_time > 0.0) * contact_filt
-        self.feet_air_time += self.dt
-        rew_air_time = torch.sum(
-            (self.feet_air_time - self.cfg.rewards.swing_time_target) * first_contact,
-            dim=1,
+    def _reward_jump_takeoff(self):
+        takeoff_target = max(float(self.cfg.rewards.takeoff_velocity_target), 1e-3)
+        upward_speed = torch.clamp(self.base_lin_vel[:, 2], min=0.0)
+        return self.all_foot_contact.float() * torch.clamp(
+            upward_speed / takeoff_target,
+            max=1.0,
         )
-        rew_air_time *= torch.norm(self.commands[:, :2], dim=1) > 0.1
-        self.feet_air_time *= ~contact_filt
-        return rew_air_time
+
+    def _reward_jump_air(self):
+        height_gain = torch.clamp(
+            self.root_states[:, 2] - self.standing_height_target,
+            min=0.0,
+        )
+        return self.airborne.float() * torch.clamp(
+            height_gain / self.jump_height_gain_target,
+            max=1.5,
+        )
+
+    def _reward_jump_height(self):
+        height_gain = torch.clamp(
+            self.last_jump_peak_height - self.standing_height_target,
+            min=0.0,
+        )
+        return self.valid_jump.float() * torch.clamp(
+            height_gain / self.jump_height_gain_target,
+            max=1.5,
+        )
+
+    def _reward_horizontal_drift(self):
+        return torch.sum(torch.square(self.base_lin_vel[:, :2]), dim=1)
+
+    def _reward_yaw_rate(self):
+        return torch.square(self.base_ang_vel[:, 2])
 
     def _reward_alive(self):
         return 1.0
