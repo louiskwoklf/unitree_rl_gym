@@ -355,7 +355,11 @@ class BruceRobot(LeggedRobot):
             self.valid_jump[landing] = (
                 self.last_jump_air_time[landing] >= self.cfg.rewards.min_jump_air_time
             ) & (height_gain >= self.cfg.rewards.min_jump_height)
-            self.landing_reward_timer[landing] = self.cfg.rewards.landing_reward_window_s
+            successful_landing = landing.clone()
+            successful_landing[landing] = self.valid_jump[landing]
+            self.landing_reward_timer[successful_landing] = (
+                self.cfg.rewards.landing_reward_window_s
+            )
 
         grounded = ~self.airborne
         self.airborne_time[grounded] = 0.0
@@ -379,17 +383,11 @@ class BruceRobot(LeggedRobot):
             -foot_height_diff_sq / foot_scale
         )
 
-    def _jump_posture_factor(self):
-        pitch_sq = torch.square(self.rpy[:, 1])
-        pitch_rate_sq = torch.square(self.base_ang_vel[:, 1])
-
-        angle_scale = max(float(self.cfg.rewards.max_pitch_angle), 1e-3) ** 2
-        rate_scale = max(float(self.cfg.rewards.max_pitch_rate), 1e-3) ** 2
-
-        return torch.exp(-pitch_sq / angle_scale - pitch_rate_sq / rate_scale)
-
-    def _jump_quality_factor(self):
-        return self._jump_vertical_factor() * self._jump_posture_factor()
+    def _airborne_or_landing_mask(self):
+        return torch.clamp(
+            self.airborne.float() + (self.landing_reward_timer > 0.0).float(),
+            max=1.0,
+        )
 
     def _post_physics_step_callback(self):
         self.update_feet_state()
@@ -430,7 +428,7 @@ class BruceRobot(LeggedRobot):
         return (
             self.all_foot_contact.float()
             * torch.clamp(upward_speed / takeoff_target, max=1.0)
-            * self._jump_quality_factor()
+            * self._jump_vertical_factor()
         )
 
     def _reward_jump_air(self):
@@ -441,7 +439,7 @@ class BruceRobot(LeggedRobot):
         return (
             self.airborne.float()
             * torch.clamp(height_gain / self.jump_height_gain_target, max=1.5)
-            * self._jump_quality_factor()
+            * self._jump_vertical_factor()
         )
 
     def _reward_jump_height(self):
@@ -452,7 +450,7 @@ class BruceRobot(LeggedRobot):
         return (
             self.valid_jump.float()
             * torch.clamp(height_gain / self.jump_height_gain_target, max=1.5)
-            * self._jump_quality_factor()
+            * self._jump_vertical_factor()
         )
 
     def _reward_horizontal_drift(self):
@@ -474,10 +472,10 @@ class BruceRobot(LeggedRobot):
         ).float()
 
     def _reward_pitch_angle(self):
-        return torch.square(self.rpy[:, 1])
+        return self._airborne_or_landing_mask() * torch.square(self.rpy[:, 1])
 
     def _reward_pitch_rate(self):
-        return torch.square(self.base_ang_vel[:, 1])
+        return self._airborne_or_landing_mask() * torch.square(self.base_ang_vel[:, 1])
 
     def _reward_landing_upright(self):
         landing_mask = (self.landing_reward_timer > 0.0).float() * self.all_foot_contact.float()

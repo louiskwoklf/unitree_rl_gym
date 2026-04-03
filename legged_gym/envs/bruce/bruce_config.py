@@ -138,15 +138,15 @@ class BruceRoughCfg(LeggedRobotCfg):
             horizontal_position = -8.0
             feet_symmetry = -4.0
             contact_balance = -2.0
-            pitch_angle = -6.0
-            pitch_rate = -2.5
-            landing_upright = 6.0
+            pitch_angle = -1.0
+            pitch_rate = -0.5
+            landing_upright = 2.0
             yaw_rate = -0.3
 
 
 class BruceRoughCfgPPO(LeggedRobotCfgPPO):
     class policy:
-        init_noise_std = 0.8
+        init_noise_std = 0.4
         actor_hidden_dims = [32]
         critic_hidden_dims = [32]
         activation = "elu"
@@ -155,7 +155,7 @@ class BruceRoughCfgPPO(LeggedRobotCfgPPO):
         rnn_num_layers = 1
 
     class algorithm(LeggedRobotCfgPPO.algorithm):
-        entropy_coef = 0.01
+        entropy_coef = 0.003
 
     class runner(LeggedRobotCfgPPO.runner):
         policy_class_name = "ActorCriticRecurrent"
