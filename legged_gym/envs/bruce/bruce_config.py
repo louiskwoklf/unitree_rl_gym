@@ -100,6 +100,7 @@ class BruceRoughCfg(LeggedRobotCfg):
         base_height_target = 0.43
         max_contact_force = 60.0
         only_positive_rewards = True
+        swing_foot_height_target = 0.08
 
         class scales(LeggedRobotCfg.rewards.scales):
             tracking_lin_vel = 1.0
@@ -124,7 +125,7 @@ class BruceRoughCfg(LeggedRobotCfg):
 
 class BruceRoughCfgPPO(LeggedRobotCfgPPO):
     class policy:
-        init_noise_std = 0.8
+        init_noise_std = 0.4
         actor_hidden_dims = [32]
         critic_hidden_dims = [32]
         activation = "elu"
@@ -133,7 +134,7 @@ class BruceRoughCfgPPO(LeggedRobotCfgPPO):
         rnn_num_layers = 1
 
     class algorithm(LeggedRobotCfgPPO.algorithm):
-        entropy_coef = 0.01
+        entropy_coef = 0.003
 
     class runner(LeggedRobotCfgPPO.runner):
         policy_class_name = "ActorCriticRecurrent"

@@ -283,9 +283,15 @@ class BruceRobot(LeggedRobot):
         return res
 
     def _reward_feet_swing_height(self):
-        contact = torch.norm(self.contact_forces[:, self.feet_indices, :3], dim=2) > 1.0
-        pos_error = torch.square(self.feet_pos[:, :, 2] - 0.05) * ~contact
-        return torch.sum(pos_error, dim=1)
+        # The old version only shaped feet that were already out of contact and
+        # used a very low 5 cm target, so brief ankle taps could satisfy swing
+        # phase with almost no real leg lift. Instead, require a minimum
+        # clearance throughout the commanded swing window.
+        swing_mask = (self.leg_phase >= 0.55).float()
+        height_deficit = (
+            self.cfg.rewards.swing_foot_height_target - self.feet_pos[:, :, 2]
+        ).clip(min=0.0)
+        return torch.sum(torch.square(height_deficit) * swing_mask, dim=1)
 
     def _reward_alive(self):
         return 1.0
