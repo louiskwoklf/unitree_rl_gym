@@ -95,7 +95,6 @@ class BruceRobot(LeggedRobot):
         self.rigid_body_states_view = self.rigid_body_states.view(self.num_envs, -1, 13)
         self.feet_state = self.rigid_body_states_view[:, self.feet_indices, :]
         self.feet_pos = self.feet_state[:, :, :3]
-        self.feet_vel = self.feet_state[:, :, 7:10]
 
     def _init_buffers(self):
         super()._init_buffers()
@@ -124,18 +123,6 @@ class BruceRobot(LeggedRobot):
                 name_to_index["hip_roll_l"],
                 name_to_index["knee_pitch_l"],
                 name_to_index["ankle_pitch_l"],
-            ],
-            dtype=torch.long,
-            device=self.device,
-        )
-        self.arm_indices = torch.tensor(
-            [
-                name_to_index["shoulder_pitch_r"],
-                name_to_index["shoulder_roll_r"],
-                name_to_index["elbow_pitch_r"],
-                name_to_index["shoulder_pitch_l"],
-                name_to_index["shoulder_roll_l"],
-                name_to_index["elbow_pitch_l"],
             ],
             dtype=torch.long,
             device=self.device,
@@ -179,12 +166,6 @@ class BruceRobot(LeggedRobot):
             device=self.device,
             requires_grad=False,
         )
-        self.all_foot_contact = torch.zeros(
-            self.num_envs,
-            dtype=torch.bool,
-            device=self.device,
-            requires_grad=False,
-        )
         self.airborne = torch.zeros(
             self.num_envs,
             dtype=torch.bool,
@@ -210,12 +191,6 @@ class BruceRobot(LeggedRobot):
             device=self.device,
             requires_grad=False,
         )
-        self.last_jump_air_time = torch.zeros(
-            self.num_envs,
-            dtype=torch.float,
-            device=self.device,
-            requires_grad=False,
-        )
         self.valid_jump = torch.zeros(
             self.num_envs,
             dtype=torch.bool,
@@ -232,12 +207,10 @@ class BruceRobot(LeggedRobot):
         self.prev_jump_contacts[env_ids] = False
         self.feet_contact[env_ids] = False
         self.any_foot_contact[env_ids] = False
-        self.all_foot_contact[env_ids] = False
         self.airborne[env_ids] = False
         self.airborne_time[env_ids] = 0.0
         self.jump_peak_height[env_ids] = self.standing_height_target
         self.last_jump_peak_height[env_ids] = 0.0
-        self.last_jump_air_time[env_ids] = 0.0
         self.valid_jump[env_ids] = False
 
     def _log_collision_body_matches(self):
@@ -300,7 +273,6 @@ class BruceRobot(LeggedRobot):
         self.gym.refresh_rigid_body_state_tensor(self.sim)
         self.feet_state = self.rigid_body_states_view[:, self.feet_indices, :]
         self.feet_pos = self.feet_state[:, :, :3]
-        self.feet_vel = self.feet_state[:, :, 7:10]
 
     def _resample_commands(self, env_ids):
         if len(env_ids) == 0:
@@ -315,13 +287,11 @@ class BruceRobot(LeggedRobot):
         was_airborne = self.airborne.clone()
         self.feet_contact = filtered_contact
         self.any_foot_contact = torch.any(filtered_contact, dim=1)
-        self.all_foot_contact = torch.all(filtered_contact, dim=1)
         self.airborne = ~self.any_foot_contact
 
         base_height = self.root_states[:, 2]
         self.valid_jump.zero_()
         self.last_jump_peak_height.zero_()
-        self.last_jump_air_time.zero_()
 
         takeoff = self.airborne & ~was_airborne
         if torch.any(takeoff):
@@ -339,10 +309,9 @@ class BruceRobot(LeggedRobot):
         landing = was_airborne & self.any_foot_contact
         if torch.any(landing):
             self.last_jump_peak_height[landing] = self.jump_peak_height[landing]
-            self.last_jump_air_time[landing] = self.airborne_time[landing]
             height_gain = self.last_jump_peak_height[landing] - self.standing_height_target
             self.valid_jump[landing] = (
-                self.last_jump_air_time[landing] >= self.cfg.rewards.min_jump_air_time
+                self.airborne_time[landing] >= self.cfg.rewards.min_jump_air_time
             ) & (height_gain >= self.cfg.rewards.min_jump_height)
 
         grounded = ~self.airborne
@@ -400,26 +369,6 @@ class BruceRobot(LeggedRobot):
         if self.add_noise:
             self.obs_buf += (2 * torch.rand_like(self.obs_buf) - 1) * self.noise_scale_vec
 
-    def _reward_jump_takeoff(self):
-        takeoff_target = max(float(self.cfg.rewards.takeoff_velocity_target), 1e-3)
-        upward_speed = torch.clamp(self.base_lin_vel[:, 2], min=0.0)
-        return (
-            self.all_foot_contact.float()
-            * torch.clamp(upward_speed / takeoff_target, max=1.0)
-            * self._jump_vertical_factor()
-        )
-
-    def _reward_jump_air(self):
-        height_gain = torch.clamp(
-            self.root_states[:, 2] - self.standing_height_target,
-            min=0.0,
-        )
-        return (
-            self.airborne.float()
-            * torch.clamp(height_gain / self.jump_height_gain_target, max=1.5)
-            * self._jump_vertical_factor()
-        )
-
     def _reward_jump_height(self):
         height_gain = torch.clamp(
             self.last_jump_peak_height - self.standing_height_target,
@@ -431,23 +380,11 @@ class BruceRobot(LeggedRobot):
             * self._jump_vertical_factor()
         )
 
-    def _reward_horizontal_drift(self):
-        return torch.sum(torch.square(self.base_lin_vel[:, :2]), dim=1)
-
     def _reward_horizontal_position(self):
         return torch.sum(
             torch.square(self.root_states[:, :2] - self.env_origins[:, :2]),
             dim=1,
         )
-
-    def _reward_feet_symmetry(self):
-        return torch.square(self.feet_pos[:, 0, 2] - self.feet_pos[:, 1, 2])
-
-    def _reward_contact_balance(self):
-        return torch.logical_xor(
-            self.feet_contact[:, 0],
-            self.feet_contact[:, 1],
-        ).float()
 
     def _reward_yaw_rate(self):
         return torch.square(self.base_ang_vel[:, 2])
@@ -455,16 +392,6 @@ class BruceRobot(LeggedRobot):
     def _reward_alive(self):
         return 1.0
 
-    def _reward_contact_no_vel(self):
-        contact = torch.norm(self.contact_forces[:, self.feet_indices, :3], dim=2) > 1.0
-        contact_feet_vel = self.feet_vel * contact.unsqueeze(-1)
-        penalize = torch.square(contact_feet_vel[:, :, :3])
-        return torch.sum(penalize, dim=(1, 2))
-
     def _reward_hip_pos(self):
         hip_error = self.dof_pos[:, self.hip_indices] - self.default_dof_pos[:, self.hip_indices]
         return torch.sum(torch.square(hip_error), dim=1)
-
-    def _reward_arm_pos(self):
-        arm_error = self.dof_pos[:, self.arm_indices] - self.default_dof_pos[:, self.arm_indices]
-        return torch.sum(torch.square(arm_error), dim=1)
