@@ -255,7 +255,7 @@
     <parent link="base_link"/>
     <child link="hip_yaw_link_r"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.57079632679" upper="1.57079632679" effort="10.5" velocity="20.0"/>
+    <limit lower="-1.57079632679" upper="1.57079632679" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -264,7 +264,7 @@
     <parent link="hip_yaw_link_r"/>
     <child link="hip_pitch_link_r"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-0.40" upper="2.50" effort="10.5" velocity="20.0"/>
+    <limit lower="-0.40" upper="2.50" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -273,7 +273,7 @@
     <parent link="hip_pitch_link_r"/>
     <child link="hip_roll_link_r"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-0.78539816339" upper="0.78539816339" effort="10.5" velocity="20.0"/>
+    <limit lower="-0.78539816339" upper="0.78539816339" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -283,7 +283,7 @@
     <child link="knee_pitch_link_r"/>
     <axis xyz="0 0 1"/>
     <!-- intersection(SDF, macros): lower=max(-3.1415, -2.50)=-2.50; upper=min(-0.01, 0.0)=-0.01 -->
-    <limit lower="-2.50" upper="-0.01" effort="10.5" velocity="20.0"/>
+    <limit lower="-2.50" upper="-0.01" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -292,7 +292,7 @@
     <parent link="knee_pitch_link_r"/>
     <child link="ankle_pitch_link_r"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.50" upper="1.50" effort="10.5" velocity="20.0"/>
+    <limit lower="-1.50" upper="1.50" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -304,7 +304,7 @@
     <parent link="base_link"/>
     <child link="hip_yaw_link_l"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.57079632679" upper="1.57079632679" effort="10.5" velocity="20.0"/>
+    <limit lower="-1.57079632679" upper="1.57079632679" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -313,7 +313,7 @@
     <parent link="hip_yaw_link_l"/>
     <child link="hip_pitch_link_l"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-0.40" upper="2.50" effort="10.5" velocity="20.0"/>
+    <limit lower="-0.40" upper="2.50" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -322,7 +322,7 @@
     <parent link="hip_pitch_link_l"/>
     <child link="hip_roll_link_l"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-0.78539816339" upper="0.78539816339" effort="10.5" velocity="20.0"/>
+    <limit lower="-0.78539816339" upper="0.78539816339" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -331,7 +331,7 @@
     <parent link="hip_roll_link_l"/>
     <child link="knee_pitch_link_l"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.50" upper="-0.01" effort="10.5" velocity="20.0"/>
+    <limit lower="-2.50" upper="-0.01" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -340,7 +340,7 @@
     <parent link="knee_pitch_link_l"/>
     <child link="ankle_pitch_link_l"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-1.50" upper="1.50" effort="10.5" velocity="20.0"/>
+    <limit lower="-1.50" upper="1.50" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -352,7 +352,7 @@
     <parent link="base_link"/>
     <child link="shoulder_pitch_link_r"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-3.14159265359" upper="3.14159265359" effort="10.5" velocity="20.0"/>
+    <limit lower="-3.14159265359" upper="3.14159265359" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -362,7 +362,7 @@
     <child link="shoulder_roll_link_r"/>
     <axis xyz="0 0 1"/>
     <!-- From BRUCE_macros.py mapping: right roll in [-SHOULDER_ROLL_MAX, -SHOULDER_ROLL_MIN] = [-pi/2, +1.9] -->
-    <limit lower="-1.57079632679" upper="1.90" effort="10.5" velocity="20.0"/>
+    <limit lower="-1.57079632679" upper="1.90" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -372,7 +372,7 @@
     <child link="elbow_pitch_link_r"/>
     <axis xyz="0 0 1"/>
     <!-- Macros defines ELBOW_YAW limits; SDF joint is elbow_pitch. Using macros bounds as the policy/URDF bounds. -->
-    <limit lower="-2.30" upper="2.30" effort="10.5" velocity="20.0"/>
+    <limit lower="-2.30" upper="2.30" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -384,7 +384,7 @@
     <parent link="base_link"/>
     <child link="shoulder_pitch_link_l"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-3.14159265359" upper="3.14159265359" effort="10.5" velocity="20.0"/>
+    <limit lower="-3.14159265359" upper="3.14159265359" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -394,7 +394,7 @@
     <child link="shoulder_roll_link_l"/>
     <axis xyz="0 0 1"/>
     <!-- Left roll in [SHOULDER_ROLL_MIN, SHOULDER_ROLL_MAX] = [-1.9, +pi/2] -->
-    <limit lower="-1.90" upper="1.57079632679" effort="10.5" velocity="20.0"/>
+    <limit lower="-1.90" upper="1.57079632679" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -403,7 +403,7 @@
     <parent link="shoulder_roll_link_l"/>
     <child link="elbow_pitch_link_l"/>
     <axis xyz="0 0 1"/>
-    <limit lower="-2.30" upper="2.30" effort="10.5" velocity="20.0"/>
+    <limit lower="-2.30" upper="2.30" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
