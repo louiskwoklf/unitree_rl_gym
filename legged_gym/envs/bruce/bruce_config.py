@@ -105,9 +105,6 @@ class BruceRoughCfg(LeggedRobotCfg):
         max_horizontal_speed = 0.15
         max_horizontal_displacement = 0.06
         max_foot_height_diff = 0.03
-        max_pitch_angle = 0.2
-        max_pitch_rate = 1.5
-        landing_reward_window_s = 0.18
         max_contact_force = 60.0
         only_positive_rewards = False
 
@@ -138,9 +135,6 @@ class BruceRoughCfg(LeggedRobotCfg):
             horizontal_position = -8.0
             feet_symmetry = -4.0
             contact_balance = -2.0
-            pitch_angle = -1.0
-            pitch_rate = -0.5
-            landing_upright = 2.0
             yaw_rate = -0.3
 
 
