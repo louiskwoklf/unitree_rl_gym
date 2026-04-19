@@ -30,6 +30,56 @@ def _find_dof_indices(env, names):
     return [(name, name_to_index[name]) for name in names if name in name_to_index]
 
 
+def _install_reset_snapshot_hook(env, ankle_index_tensor):
+    snapshot = {
+        "valid": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+        "base_height": torch.full((env.num_envs,), float("nan"), dtype=torch.float, device=env.device),
+        "roll": torch.full((env.num_envs,), float("nan"), dtype=torch.float, device=env.device),
+        "pitch": torch.full((env.num_envs,), float("nan"), dtype=torch.float, device=env.device),
+        "timeout": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+        "tip": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+        "contact": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
+    }
+    if ankle_index_tensor is not None:
+        snapshot["ankle_pos"] = torch.full(
+            (env.num_envs, len(ankle_index_tensor)),
+            float("nan"),
+            dtype=torch.float,
+            device=env.device,
+        )
+        snapshot["ankle_vel"] = torch.full_like(snapshot["ankle_pos"], float("nan"))
+
+    original_reset_idx = env.reset_idx
+
+    def wrapped_reset_idx(env_ids):
+        if len(env_ids) > 0:
+            snapshot["valid"][env_ids] = True
+            snapshot["base_height"][env_ids] = env.root_states[env_ids, 2]
+            snapshot["roll"][env_ids] = torch.abs(env.rpy[env_ids, 0])
+            snapshot["pitch"][env_ids] = torch.abs(env.rpy[env_ids, 1])
+            snapshot["timeout"][env_ids] = env.time_out_buf[env_ids]
+            snapshot["tip"][env_ids] = torch.logical_or(
+                torch.abs(env.rpy[env_ids, 1]) > 1.0,
+                torch.abs(env.rpy[env_ids, 0]) > 0.8,
+            )
+            if len(env.termination_contact_indices) > 0:
+                termination_contact = torch.any(
+                    torch.norm(
+                        env.contact_forces[:, env.termination_contact_indices, :], dim=-1
+                    )
+                    > 1.0,
+                    dim=1,
+                )
+                snapshot["contact"][env_ids] = termination_contact[env_ids]
+            if ankle_index_tensor is not None:
+                snapshot["ankle_pos"][env_ids] = env.dof_pos[env_ids][:, ankle_index_tensor]
+                snapshot["ankle_vel"][env_ids] = env.dof_vel[env_ids][:, ankle_index_tensor]
+        return original_reset_idx(env_ids)
+
+    env.reset_idx = wrapped_reset_idx
+    return snapshot
+
+
 def main(args):
     env_cfg, _ = task_registry.get_cfgs(name=args.task)
     _disable_task_motion(env_cfg)
@@ -93,6 +143,7 @@ def main(args):
         first_done_ankle_vel = torch.full_like(ankle_pos_error_max, float("nan"))
     else:
         ankle_index_tensor = None
+    reset_snapshot = _install_reset_snapshot_hook(env, ankle_index_tensor)
 
     for _ in range(horizon_steps):
         _, _, _, dones, _ = env.step(zero_actions)
@@ -109,26 +160,16 @@ def main(args):
             ankle_vel_abs_max = torch.maximum(ankle_vel_abs_max, ankle_vel_abs)
 
         if newly_done.any():
-            first_done_base_height[newly_done] = env.root_states[newly_done, 2]
-            first_done_roll[newly_done] = torch.abs(env.rpy[newly_done, 0])
-            first_done_pitch[newly_done] = torch.abs(env.rpy[newly_done, 1])
-            first_done_timeout[newly_done] = env.time_out_buf[newly_done]
-            first_done_tip[newly_done] = torch.logical_or(
-                torch.abs(env.rpy[newly_done, 1]) > 1.0,
-                torch.abs(env.rpy[newly_done, 0]) > 0.8,
-            )
-            if len(env.termination_contact_indices) > 0:
-                termination_contact = torch.any(
-                    torch.norm(
-                        env.contact_forces[:, env.termination_contact_indices, :], dim=-1
-                    )
-                    > 1.0,
-                    dim=1,
-                )
-                first_done_contact[newly_done] = termination_contact[newly_done]
+            first_done_base_height[newly_done] = reset_snapshot["base_height"][newly_done]
+            first_done_roll[newly_done] = reset_snapshot["roll"][newly_done]
+            first_done_pitch[newly_done] = reset_snapshot["pitch"][newly_done]
+            first_done_timeout[newly_done] = reset_snapshot["timeout"][newly_done]
+            first_done_tip[newly_done] = reset_snapshot["tip"][newly_done]
+            first_done_contact[newly_done] = reset_snapshot["contact"][newly_done]
             if ankle_index_tensor is not None:
-                first_done_ankle_pos[newly_done] = env.dof_pos[newly_done][:, ankle_index_tensor]
-                first_done_ankle_vel[newly_done] = env.dof_vel[newly_done][:, ankle_index_tensor]
+                first_done_ankle_pos[newly_done] = reset_snapshot["ankle_pos"][newly_done]
+                first_done_ankle_vel[newly_done] = reset_snapshot["ankle_vel"][newly_done]
+            reset_snapshot["valid"][newly_done] = False
 
         first_done_step[newly_done] = ages[newly_done]
         ages[done_mask] = 0
