@@ -3,7 +3,7 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 
 class BruceStandCfg(LeggedRobotCfg):
     class init_state(LeggedRobotCfg.init_state):
-        pos = [0.0, 0.0, 0.43]
+        pos = [0.0, 0.0, 1.6]
         default_joint_angles = {
             "hip_yaw_r": -0.008243,
             "hip_pitch_r": 0.469268,
@@ -27,7 +27,7 @@ class BruceStandCfg(LeggedRobotCfg):
         num_observations = 54
         num_privileged_obs = None
         num_actions = 10
-        episode_length_s = 8.0
+        episode_length_s = 20.0
 
     class commands(LeggedRobotCfg.commands):
         curriculum = False
@@ -77,7 +77,7 @@ class BruceStandCfg(LeggedRobotCfg):
         foot_name = "ankle_pitch_link"
         penalize_contacts_on = ["hip", "knee", "shoulder", "elbow"]
         terminate_after_contacts_on = ["base_link"]
-        self_collisions = 0
+        self_collisions = 1
         flip_visual_attachments = False
 
     class rewards(LeggedRobotCfg.rewards):
@@ -115,6 +115,6 @@ class BruceStandCfgPPO(LeggedRobotCfgPPO):
         entropy_coef = 0.005
 
     class runner(LeggedRobotCfgPPO.runner):
-        max_iterations = 3000
-        run_name = ""
+        max_iterations = 50
+        run_name = "smoke1"
         experiment_name = "bruce_stand"
