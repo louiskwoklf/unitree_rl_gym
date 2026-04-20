@@ -108,6 +108,20 @@ def _install_reset_snapshot_hook(env, joint_index_tensor):
     return snapshot
 
 
+def _override_effort_limit(env, effort_limit):
+    original_min = float(env.torque_limits.min().item())
+    original_max = float(env.torque_limits.max().item())
+
+    if hasattr(env.gym, "get_actor_dof_properties"):
+        for env_handle, actor_handle in zip(env.envs, env.actor_handles):
+            dof_props = env.gym.get_actor_dof_properties(env_handle, actor_handle)
+            dof_props["effort"][:] = effort_limit
+            env.gym.set_actor_dof_properties(env_handle, actor_handle, dof_props)
+
+    env.torque_limits[:] = effort_limit
+    return original_min, original_max
+
+
 def main(args):
     env_cfg, _ = task_registry.get_cfgs(name=args.task)
     _disable_task_motion(env_cfg)
@@ -116,6 +130,9 @@ def main(args):
         env_cfg.env.num_envs = 1 if not args.headless else min(env_cfg.env.num_envs, 256)
 
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
+    torque_override = None
+    if args.override_effort_limit is not None:
+        torque_override = _override_effort_limit(env, float(args.override_effort_limit))
     env.reset()
 
     horizon_steps = int(env.max_episode_length)
@@ -251,8 +268,17 @@ def main(args):
     print(
         "Mode: "
         f"fix_base_link={bool(getattr(env.cfg.asset, 'fix_base_link', False))}, "
-        f"headless={bool(args.headless)}"
+        f"headless={bool(args.headless)}, "
+        f"override_effort_limit={args.override_effort_limit if args.override_effort_limit is not None else 'None'}"
     )
+    if torque_override is not None:
+        original_min, original_max = torque_override
+        print(
+            "Effort limit override: "
+            f"original_min={original_min:.4f} Nm, "
+            f"original_max={original_max:.4f} Nm, "
+            f"new_limit={float(args.override_effort_limit):.4f} Nm"
+        )
     print(
         f"Evaluated {env.num_envs} envs for {horizon_steps} policy steps "
         f"({horizon_steps * env.dt:.2f}s)"

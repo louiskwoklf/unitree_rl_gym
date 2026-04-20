@@ -132,6 +132,7 @@ def get_args():
         
         {"name": "--headless", "action": "store_true", "default": False, "help": "Force display off at all times"},
         {"name": "--fix_base_link", "action": "store_true", "default": False, "help": "Fix the robot base link in the simulation asset."},
+        {"name": "--override_effort_limit", "type": float, "help": "Override all DOF effort limits for diagnostics."},
         {"name": "--horovod", "action": "store_true", "default": False, "help": "Use horovod for multi-gpu training"},
         {"name": "--rl_device", "type": str, "default": "cuda:0", "help": 'Device used by the RL algorithm, (cpu, gpu, cuda:0, cuda:1 etc..)'},
         {"name": "--num_envs", "type": int, "help": "Number of environments to create. Overrides config file if provided."},
