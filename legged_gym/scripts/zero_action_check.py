@@ -30,7 +30,25 @@ def _find_dof_indices(env, names):
     return [(name, name_to_index[name]) for name in names if name in name_to_index]
 
 
-def _install_reset_snapshot_hook(env, ankle_index_tensor):
+def _select_diagnostic_dofs(env):
+    preferred_names = (
+        "hip_pitch_r",
+        "knee_pitch_r",
+        "ankle_pitch_r",
+        "hip_pitch_l",
+        "knee_pitch_l",
+        "ankle_pitch_l",
+    )
+    selected = _find_dof_indices(env, preferred_names)
+    if selected:
+        return selected
+    if hasattr(env, "leg_indices"):
+        leg_indices = env.leg_indices.detach().cpu().tolist()
+        return [(env.dof_names[idx], idx) for idx in leg_indices]
+    return _find_dof_indices(env, ("ankle_pitch_r", "ankle_pitch_l"))
+
+
+def _install_reset_snapshot_hook(env, joint_index_tensor):
     snapshot = {
         "valid": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
         "base_height": torch.full((env.num_envs,), float("nan"), dtype=torch.float, device=env.device),
@@ -40,14 +58,14 @@ def _install_reset_snapshot_hook(env, ankle_index_tensor):
         "tip": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
         "contact": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
     }
-    if ankle_index_tensor is not None:
-        snapshot["ankle_pos"] = torch.full(
-            (env.num_envs, len(ankle_index_tensor)),
+    if joint_index_tensor is not None:
+        snapshot["joint_pos"] = torch.full(
+            (env.num_envs, len(joint_index_tensor)),
             float("nan"),
             dtype=torch.float,
             device=env.device,
         )
-        snapshot["ankle_vel"] = torch.full_like(snapshot["ankle_pos"], float("nan"))
+        snapshot["joint_vel"] = torch.full_like(snapshot["joint_pos"], float("nan"))
 
     original_reset_idx = env.reset_idx
 
@@ -71,9 +89,9 @@ def _install_reset_snapshot_hook(env, ankle_index_tensor):
                     dim=1,
                 )
                 snapshot["contact"][env_ids] = termination_contact[env_ids]
-            if ankle_index_tensor is not None:
-                snapshot["ankle_pos"][env_ids] = env.dof_pos[env_ids][:, ankle_index_tensor]
-                snapshot["ankle_vel"][env_ids] = env.dof_vel[env_ids][:, ankle_index_tensor]
+            if joint_index_tensor is not None:
+                snapshot["joint_pos"][env_ids] = env.dof_pos[env_ids][:, joint_index_tensor]
+                snapshot["joint_vel"][env_ids] = env.dof_vel[env_ids][:, joint_index_tensor]
         return original_reset_idx(env_ids)
 
     env.reset_idx = wrapped_reset_idx
@@ -127,23 +145,25 @@ def main(args):
     first_done_tip = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
     first_done_contact = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
 
-    ankle_dofs = _find_dof_indices(env, ("ankle_pitch_r", "ankle_pitch_l"))
-    ankle_names = [name for name, _ in ankle_dofs]
-    ankle_indices = [idx for _, idx in ankle_dofs]
-    if ankle_indices:
-        ankle_index_tensor = torch.tensor(ankle_indices, dtype=torch.long, device=env.device)
-        ankle_pos_error_max = torch.zeros(
+    diagnostic_dofs = _select_diagnostic_dofs(env)
+    diagnostic_names = [name for name, _ in diagnostic_dofs]
+    diagnostic_indices = [idx for _, idx in diagnostic_dofs]
+    if diagnostic_indices:
+        joint_index_tensor = torch.tensor(diagnostic_indices, dtype=torch.long, device=env.device)
+        joint_target = env.default_dof_pos[0, joint_index_tensor]
+        joint_pos_error_max = torch.zeros(
             env.num_envs,
-            len(ankle_indices),
+            len(diagnostic_indices),
             dtype=torch.float,
             device=env.device,
         )
-        ankle_vel_abs_max = torch.zeros_like(ankle_pos_error_max)
-        first_done_ankle_pos = torch.full_like(ankle_pos_error_max, float("nan"))
-        first_done_ankle_vel = torch.full_like(ankle_pos_error_max, float("nan"))
+        joint_vel_abs_max = torch.zeros_like(joint_pos_error_max)
+        first_done_joint_pos = torch.full_like(joint_pos_error_max, float("nan"))
+        first_done_joint_vel = torch.full_like(joint_pos_error_max, float("nan"))
     else:
-        ankle_index_tensor = None
-    reset_snapshot = _install_reset_snapshot_hook(env, ankle_index_tensor)
+        joint_index_tensor = None
+        joint_target = None
+    reset_snapshot = _install_reset_snapshot_hook(env, joint_index_tensor)
 
     for _ in range(horizon_steps):
         _, _, _, dones, _ = env.step(zero_actions)
@@ -151,13 +171,13 @@ def main(args):
         done_mask = dones.bool()
         newly_done = done_mask & (first_done_step < 0)
 
-        if ankle_index_tensor is not None:
-            ankle_pos_error = torch.abs(
-                env.dof_pos[:, ankle_index_tensor] - env.default_dof_pos[:, ankle_index_tensor]
+        if joint_index_tensor is not None:
+            joint_pos_error = torch.abs(
+                env.dof_pos[:, joint_index_tensor] - joint_target.unsqueeze(0)
             )
-            ankle_vel_abs = torch.abs(env.dof_vel[:, ankle_index_tensor])
-            ankle_pos_error_max = torch.maximum(ankle_pos_error_max, ankle_pos_error)
-            ankle_vel_abs_max = torch.maximum(ankle_vel_abs_max, ankle_vel_abs)
+            joint_vel_abs = torch.abs(env.dof_vel[:, joint_index_tensor])
+            joint_pos_error_max = torch.maximum(joint_pos_error_max, joint_pos_error)
+            joint_vel_abs_max = torch.maximum(joint_vel_abs_max, joint_vel_abs)
 
         if newly_done.any():
             first_done_base_height[newly_done] = reset_snapshot["base_height"][newly_done]
@@ -166,9 +186,19 @@ def main(args):
             first_done_timeout[newly_done] = reset_snapshot["timeout"][newly_done]
             first_done_tip[newly_done] = reset_snapshot["tip"][newly_done]
             first_done_contact[newly_done] = reset_snapshot["contact"][newly_done]
-            if ankle_index_tensor is not None:
-                first_done_ankle_pos[newly_done] = reset_snapshot["ankle_pos"][newly_done]
-                first_done_ankle_vel[newly_done] = reset_snapshot["ankle_vel"][newly_done]
+            if joint_index_tensor is not None:
+                first_done_joint_pos[newly_done] = reset_snapshot["joint_pos"][newly_done]
+                first_done_joint_vel[newly_done] = reset_snapshot["joint_vel"][newly_done]
+                reset_joint_pos_error = torch.abs(
+                    reset_snapshot["joint_pos"][newly_done] - joint_target.unsqueeze(0)
+                )
+                reset_joint_vel_abs = torch.abs(reset_snapshot["joint_vel"][newly_done])
+                joint_pos_error_max[newly_done] = torch.maximum(
+                    joint_pos_error_max[newly_done], reset_joint_pos_error
+                )
+                joint_vel_abs_max[newly_done] = torch.maximum(
+                    joint_vel_abs_max[newly_done], reset_joint_vel_abs
+                )
             reset_snapshot["valid"][newly_done] = False
 
         first_done_step[newly_done] = ages[newly_done]
@@ -179,6 +209,11 @@ def main(args):
 
     print("=" * 80)
     print(f"Zero-action stability check for task '{args.task}'")
+    print(
+        "Mode: "
+        f"fix_base_link={bool(getattr(env.cfg.asset, 'fix_base_link', False))}, "
+        f"headless={bool(args.headless)}"
+    )
     print(
         f"Evaluated {env.num_envs} envs for {horizon_steps} policy steps "
         f"({horizon_steps * env.dt:.2f}s)"
@@ -210,12 +245,12 @@ def main(args):
             f"|roll|_mean={first_done_roll[failed_mask].mean().item():.4f} rad, "
             f"|pitch|_mean={first_done_pitch[failed_mask].mean().item():.4f} rad"
         )
-        if ankle_index_tensor is not None:
-            pos_mean = first_done_ankle_pos[failed_mask].mean(dim=0).detach().cpu()
-            vel_mean = first_done_ankle_vel[failed_mask].mean(dim=0).detach().cpu()
-            for i, ankle_name in enumerate(ankle_names):
+        if joint_index_tensor is not None:
+            pos_mean = first_done_joint_pos[failed_mask].mean(dim=0).detach().cpu()
+            vel_mean = first_done_joint_vel[failed_mask].mean(dim=0).detach().cpu()
+            for i, joint_name in enumerate(diagnostic_names):
                 print(
-                    f"First-failure {ankle_name}: "
+                    f"First-failure {joint_name}: "
                     f"pos_mean={pos_mean[i].item():.4f} rad, "
                     f"vel_mean={vel_mean[i].item():.4f} rad/s"
                 )
@@ -242,14 +277,14 @@ def main(args):
             f"|pitch|_mean={pitch.mean().item():.4f} rad"
         )
 
-    if ankle_index_tensor is not None:
-        ankle_pos_error_max_cpu = ankle_pos_error_max.detach().cpu()
-        ankle_vel_abs_max_cpu = ankle_vel_abs_max.detach().cpu()
-        for i, ankle_name in enumerate(ankle_names):
+    if joint_index_tensor is not None:
+        joint_pos_error_max_cpu = joint_pos_error_max.detach().cpu()
+        joint_vel_abs_max_cpu = joint_vel_abs_max.detach().cpu()
+        for i, joint_name in enumerate(diagnostic_names):
             print(
-                f"Rollout {ankle_name}: "
-                f"|pos_error|_max_mean={ankle_pos_error_max_cpu[:, i].mean().item():.4f} rad, "
-                f"|vel|_max_mean={ankle_vel_abs_max_cpu[:, i].mean().item():.4f} rad/s"
+                f"Rollout {joint_name}: "
+                f"|pos_error|_max_mean={joint_pos_error_max_cpu[:, i].mean().item():.4f} rad, "
+                f"|vel|_max_mean={joint_vel_abs_max_cpu[:, i].mean().item():.4f} rad/s"
             )
 
     if env.viewer is not None:

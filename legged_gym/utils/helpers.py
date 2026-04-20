@@ -100,6 +100,8 @@ def update_cfg_from_args(env_cfg, cfg_train, args):
         # num envs
         if args.num_envs is not None:
             env_cfg.env.num_envs = args.num_envs
+        if getattr(args, "fix_base_link", False):
+            env_cfg.asset.fix_base_link = True
     if cfg_train is not None:
         if args.seed is not None:
             cfg_train.seed = args.seed
@@ -129,6 +131,7 @@ def get_args():
         {"name": "--checkpoint", "type": int,  "help": "Saved model checkpoint number. If -1: will load the last checkpoint. Overrides config file if provided."},
         
         {"name": "--headless", "action": "store_true", "default": False, "help": "Force display off at all times"},
+        {"name": "--fix_base_link", "action": "store_true", "default": False, "help": "Fix the robot base link in the simulation asset."},
         {"name": "--horovod", "action": "store_true", "default": False, "help": "Use horovod for multi-gpu training"},
         {"name": "--rl_device", "type": str, "default": "cuda:0", "help": 'Device used by the RL algorithm, (cpu, gpu, cuda:0, cuda:1 etc..)'},
         {"name": "--num_envs", "type": int, "help": "Number of environments to create. Overrides config file if provided."},
