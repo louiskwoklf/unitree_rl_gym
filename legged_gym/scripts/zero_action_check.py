@@ -66,6 +66,9 @@ def _install_reset_snapshot_hook(env, joint_index_tensor):
             device=env.device,
         )
         snapshot["joint_vel"] = torch.full_like(snapshot["joint_pos"], float("nan"))
+        snapshot["joint_torque"] = torch.full_like(snapshot["joint_pos"], float("nan"))
+        snapshot["joint_limit_margin"] = torch.full_like(snapshot["joint_pos"], float("nan"))
+        snapshot["joint_torque_ratio"] = torch.full_like(snapshot["joint_pos"], float("nan"))
 
     original_reset_idx = env.reset_idx
 
@@ -92,6 +95,13 @@ def _install_reset_snapshot_hook(env, joint_index_tensor):
             if joint_index_tensor is not None:
                 snapshot["joint_pos"][env_ids] = env.dof_pos[env_ids][:, joint_index_tensor]
                 snapshot["joint_vel"][env_ids] = env.dof_vel[env_ids][:, joint_index_tensor]
+                snapshot["joint_torque"][env_ids] = env.torques[env_ids][:, joint_index_tensor]
+                lower_margin = env.dof_pos[env_ids][:, joint_index_tensor] - env.dof_pos_limits[joint_index_tensor, 0].unsqueeze(0)
+                upper_margin = env.dof_pos_limits[joint_index_tensor, 1].unsqueeze(0) - env.dof_pos[env_ids][:, joint_index_tensor]
+                snapshot["joint_limit_margin"][env_ids] = torch.minimum(lower_margin, upper_margin)
+                snapshot["joint_torque_ratio"][env_ids] = torch.abs(
+                    env.torques[env_ids][:, joint_index_tensor]
+                ) / torch.clamp(env.torque_limits[joint_index_tensor].unsqueeze(0), min=1e-6)
         return original_reset_idx(env_ids)
 
     env.reset_idx = wrapped_reset_idx
@@ -158,8 +168,14 @@ def main(args):
             device=env.device,
         )
         joint_vel_abs_max = torch.zeros_like(joint_pos_error_max)
+        joint_torque_abs_max = torch.zeros_like(joint_pos_error_max)
+        joint_torque_ratio_max = torch.zeros_like(joint_pos_error_max)
+        joint_limit_margin_min = torch.full_like(joint_pos_error_max, float("inf"))
         first_done_joint_pos = torch.full_like(joint_pos_error_max, float("nan"))
         first_done_joint_vel = torch.full_like(joint_pos_error_max, float("nan"))
+        first_done_joint_torque = torch.full_like(joint_pos_error_max, float("nan"))
+        first_done_joint_limit_margin = torch.full_like(joint_pos_error_max, float("nan"))
+        first_done_joint_torque_ratio = torch.full_like(joint_pos_error_max, float("nan"))
     else:
         joint_index_tensor = None
         joint_target = None
@@ -176,8 +192,18 @@ def main(args):
                 env.dof_pos[:, joint_index_tensor] - joint_target.unsqueeze(0)
             )
             joint_vel_abs = torch.abs(env.dof_vel[:, joint_index_tensor])
+            joint_torque_abs = torch.abs(env.torques[:, joint_index_tensor])
+            joint_torque_ratio = joint_torque_abs / torch.clamp(
+                env.torque_limits[joint_index_tensor].unsqueeze(0), min=1e-6
+            )
+            lower_margin = env.dof_pos[:, joint_index_tensor] - env.dof_pos_limits[joint_index_tensor, 0].unsqueeze(0)
+            upper_margin = env.dof_pos_limits[joint_index_tensor, 1].unsqueeze(0) - env.dof_pos[:, joint_index_tensor]
+            joint_limit_margin = torch.minimum(lower_margin, upper_margin)
             joint_pos_error_max = torch.maximum(joint_pos_error_max, joint_pos_error)
             joint_vel_abs_max = torch.maximum(joint_vel_abs_max, joint_vel_abs)
+            joint_torque_abs_max = torch.maximum(joint_torque_abs_max, joint_torque_abs)
+            joint_torque_ratio_max = torch.maximum(joint_torque_ratio_max, joint_torque_ratio)
+            joint_limit_margin_min = torch.minimum(joint_limit_margin_min, joint_limit_margin)
 
         if newly_done.any():
             first_done_base_height[newly_done] = reset_snapshot["base_height"][newly_done]
@@ -189,15 +215,28 @@ def main(args):
             if joint_index_tensor is not None:
                 first_done_joint_pos[newly_done] = reset_snapshot["joint_pos"][newly_done]
                 first_done_joint_vel[newly_done] = reset_snapshot["joint_vel"][newly_done]
+                first_done_joint_torque[newly_done] = reset_snapshot["joint_torque"][newly_done]
+                first_done_joint_limit_margin[newly_done] = reset_snapshot["joint_limit_margin"][newly_done]
+                first_done_joint_torque_ratio[newly_done] = reset_snapshot["joint_torque_ratio"][newly_done]
                 reset_joint_pos_error = torch.abs(
                     reset_snapshot["joint_pos"][newly_done] - joint_target.unsqueeze(0)
                 )
                 reset_joint_vel_abs = torch.abs(reset_snapshot["joint_vel"][newly_done])
+                reset_joint_torque_abs = torch.abs(reset_snapshot["joint_torque"][newly_done])
                 joint_pos_error_max[newly_done] = torch.maximum(
                     joint_pos_error_max[newly_done], reset_joint_pos_error
                 )
                 joint_vel_abs_max[newly_done] = torch.maximum(
                     joint_vel_abs_max[newly_done], reset_joint_vel_abs
+                )
+                joint_torque_abs_max[newly_done] = torch.maximum(
+                    joint_torque_abs_max[newly_done], reset_joint_torque_abs
+                )
+                joint_torque_ratio_max[newly_done] = torch.maximum(
+                    joint_torque_ratio_max[newly_done], reset_snapshot["joint_torque_ratio"][newly_done]
+                )
+                joint_limit_margin_min[newly_done] = torch.minimum(
+                    joint_limit_margin_min[newly_done], reset_snapshot["joint_limit_margin"][newly_done]
                 )
             reset_snapshot["valid"][newly_done] = False
 
@@ -248,11 +287,17 @@ def main(args):
         if joint_index_tensor is not None:
             pos_mean = first_done_joint_pos[failed_mask].mean(dim=0).detach().cpu()
             vel_mean = first_done_joint_vel[failed_mask].mean(dim=0).detach().cpu()
+            torque_mean = first_done_joint_torque[failed_mask].mean(dim=0).detach().cpu()
+            limit_margin_mean = first_done_joint_limit_margin[failed_mask].mean(dim=0).detach().cpu()
+            torque_ratio_mean = first_done_joint_torque_ratio[failed_mask].mean(dim=0).detach().cpu()
             for i, joint_name in enumerate(diagnostic_names):
                 print(
                     f"First-failure {joint_name}: "
                     f"pos_mean={pos_mean[i].item():.4f} rad, "
-                    f"vel_mean={vel_mean[i].item():.4f} rad/s"
+                    f"vel_mean={vel_mean[i].item():.4f} rad/s, "
+                    f"torque_mean={torque_mean[i].item():.4f} Nm, "
+                    f"torque_ratio_mean={torque_ratio_mean[i].item():.3f}, "
+                    f"limit_margin_mean={limit_margin_mean[i].item():.4f} rad"
                 )
     else:
         print("No env reset before the horizon.")
@@ -280,11 +325,17 @@ def main(args):
     if joint_index_tensor is not None:
         joint_pos_error_max_cpu = joint_pos_error_max.detach().cpu()
         joint_vel_abs_max_cpu = joint_vel_abs_max.detach().cpu()
+        joint_torque_abs_max_cpu = joint_torque_abs_max.detach().cpu()
+        joint_torque_ratio_max_cpu = joint_torque_ratio_max.detach().cpu()
+        joint_limit_margin_min_cpu = joint_limit_margin_min.detach().cpu()
         for i, joint_name in enumerate(diagnostic_names):
             print(
                 f"Rollout {joint_name}: "
                 f"|pos_error|_max_mean={joint_pos_error_max_cpu[:, i].mean().item():.4f} rad, "
-                f"|vel|_max_mean={joint_vel_abs_max_cpu[:, i].mean().item():.4f} rad/s"
+                f"|vel|_max_mean={joint_vel_abs_max_cpu[:, i].mean().item():.4f} rad/s, "
+                f"|torque|_max_mean={joint_torque_abs_max_cpu[:, i].mean().item():.4f} Nm, "
+                f"torque_ratio_max_mean={joint_torque_ratio_max_cpu[:, i].mean().item():.3f}, "
+                f"limit_margin_min_mean={joint_limit_margin_min_cpu[:, i].mean().item():.4f} rad"
             )
 
     if env.viewer is not None:
