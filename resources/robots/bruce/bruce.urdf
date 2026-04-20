@@ -281,9 +281,9 @@
     <origin xyz="0.204949 0 0" rpy="1.5708 0 0"/>
     <parent link="hip_roll_link_r"/>
     <child link="knee_pitch_link_r"/>
-    <axis xyz="0 0 1"/>
-    <!-- intersection(SDF, macros): lower=max(-3.1415, -2.50)=-2.50; upper=min(-0.01, 0.0)=-0.01 -->
-    <limit lower="-2.50" upper="-0.01" effort="31.5" velocity="60.0"/>
+    <axis xyz="0 0 -1"/>
+    <!-- Knee pitch sign flipped to match Isaac/BRUCE actuation convention. -->
+    <limit lower="0.01" upper="2.50" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
@@ -330,8 +330,8 @@
     <origin xyz="0.204949 0 0" rpy="1.5708 0 0"/>
     <parent link="hip_roll_link_l"/>
     <child link="knee_pitch_link_l"/>
-    <axis xyz="0 0 1"/>
-    <limit lower="-2.50" upper="-0.01" effort="31.5" velocity="60.0"/>
+    <axis xyz="0 0 -1"/>
+    <limit lower="0.01" upper="2.50" effort="31.5" velocity="60.0"/>
     <dynamics damping="0.002" friction="0"/>
   </joint>
 
