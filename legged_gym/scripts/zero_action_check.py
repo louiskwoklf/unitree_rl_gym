@@ -48,6 +48,17 @@ def _select_diagnostic_dofs(env):
     return _find_dof_indices(env, ("ankle_pitch_r", "ankle_pitch_l"))
 
 
+def _get_action_joint_names(env):
+    if hasattr(env, "LEG_JOINT_NAMES"):
+        return list(env.LEG_JOINT_NAMES)
+    if hasattr(env, "leg_indices") and env.num_actions == len(env.leg_indices):
+        leg_indices = env.leg_indices.detach().cpu().tolist()
+        return [env.dof_names[idx] for idx in leg_indices]
+    if env.num_actions == len(getattr(env, "dof_names", [])):
+        return list(env.dof_names)
+    return None
+
+
 def _install_reset_snapshot_hook(env, joint_index_tensor):
     snapshot = {
         "valid": torch.zeros(env.num_envs, dtype=torch.bool, device=env.device),
@@ -122,6 +133,140 @@ def _override_effort_limit(env, effort_limit):
     return original_min, original_max
 
 
+def _print_mode_header(title, env, args, torque_override):
+    print("=" * 80)
+    print(f"{title} for task '{args.task}'")
+    print(
+        "Mode: "
+        f"fix_base_link={bool(getattr(env.cfg.asset, 'fix_base_link', False))}, "
+        f"headless={bool(args.headless)}, "
+        f"override_effort_limit={args.override_effort_limit if args.override_effort_limit is not None else 'None'}"
+    )
+    if torque_override is not None:
+        original_min, original_max = torque_override
+        print(
+            "Effort limit override: "
+            f"original_min={original_min:.4f} Nm, "
+            f"original_max={original_max:.4f} Nm, "
+            f"new_limit={float(args.override_effort_limit):.4f} Nm"
+        )
+
+
+def _run_joint_step_response(env, args, torque_override):
+    action_joint_names = _get_action_joint_names(env)
+    if action_joint_names is None:
+        raise ValueError(
+            "This environment does not expose a direct mapping from action indices to joint names."
+        )
+    if args.step_joint not in action_joint_names:
+        raise ValueError(
+            f"Unknown step joint '{args.step_joint}'. "
+            f"Available action joints: {', '.join(action_joint_names)}"
+        )
+
+    dof_matches = _find_dof_indices(env, (args.step_joint,))
+    if not dof_matches:
+        raise ValueError(f"Joint '{args.step_joint}' is not present in env.dof_names")
+
+    dof_index = dof_matches[0][1]
+    action_index = action_joint_names.index(args.step_joint)
+    warmup_steps = max(0, int(args.step_warmup_steps))
+    step_steps = max(1, int(args.step_steps))
+    action_magnitude = float(args.step_action)
+    action_scale = float(env.cfg.control.action_scale)
+    default_pos = float(env.default_dof_pos[0, dof_index].item())
+    dof_lower = float(env.dof_pos_limits[dof_index, 0].item())
+    dof_upper = float(env.dof_pos_limits[dof_index, 1].item())
+    zero_actions = torch.zeros(env.num_envs, env.num_actions, device=env.device, requires_grad=False)
+
+    _print_mode_header("Joint step-response check", env, args, torque_override)
+    print(
+        f"Joint: {args.step_joint} "
+        f"(action_index={action_index}, dof_index={dof_index})"
+    )
+    print(
+        "Step parameters: "
+        f"action_magnitude={action_magnitude:.4f}, "
+        f"target_shift={action_scale * action_magnitude:.4f} rad, "
+        f"warmup_steps={warmup_steps}, "
+        f"response_steps={step_steps} ({step_steps * env.dt:.2f}s)"
+    )
+    print(
+        "Joint limits: "
+        f"soft_lower={dof_lower:.4f} rad, "
+        f"soft_upper={dof_upper:.4f} rad, "
+        f"default={default_pos:.4f} rad"
+    )
+
+    for phase_name, action_value in (("positive", action_magnitude), ("negative", -action_magnitude)):
+        env.reset()
+        done_step = None
+        for warmup_idx in range(warmup_steps):
+            _, _, _, dones, _ = env.step(zero_actions)
+            if bool(dones[0].item()):
+                done_step = -(warmup_idx + 1)
+                break
+
+        baseline_pos = float(env.dof_pos[0, dof_index].item())
+        baseline_vel = float(env.dof_vel[0, dof_index].item())
+        target_pos = default_pos + action_scale * action_value
+        delta_min = 0.0
+        delta_max = 0.0
+        vel_abs_max = 0.0
+        torque_abs_max = 0.0
+        torque_ratio_max = 0.0
+        limit_margin_min = float("inf")
+
+        actions = zero_actions.clone()
+        actions[:, action_index] = action_value
+        if done_step is None:
+            for step_idx in range(step_steps):
+                _, _, _, dones, _ = env.step(actions)
+                pos = float(env.dof_pos[0, dof_index].item())
+                vel = float(env.dof_vel[0, dof_index].item())
+                torque = float(env.torques[0, dof_index].item())
+                torque_ratio = abs(torque) / max(float(env.torque_limits[dof_index].item()), 1e-6)
+                lower_margin = pos - float(env.dof_pos_limits[dof_index, 0].item())
+                upper_margin = float(env.dof_pos_limits[dof_index, 1].item()) - pos
+                limit_margin = min(lower_margin, upper_margin)
+                delta = pos - baseline_pos
+                delta_min = min(delta_min, delta)
+                delta_max = max(delta_max, delta)
+                vel_abs_max = max(vel_abs_max, abs(vel))
+                torque_abs_max = max(torque_abs_max, abs(torque))
+                torque_ratio_max = max(torque_ratio_max, torque_ratio)
+                limit_margin_min = min(limit_margin_min, limit_margin)
+                if bool(dones[0].item()):
+                    done_step = step_idx + 1
+                    break
+
+        final_pos = float(env.dof_pos[0, dof_index].item())
+        final_vel = float(env.dof_vel[0, dof_index].item())
+        final_delta = final_pos - baseline_pos
+        expected_peak = delta_max if action_value > 0.0 else -delta_min
+        opposite_peak = -delta_min if action_value > 0.0 else delta_max
+        direction_match = expected_peak > opposite_peak
+        done_desc = "none" if done_step is None else (
+            f"warmup_{abs(done_step)}" if done_step < 0 else f"response_{done_step}"
+        )
+
+        print(
+            f"Phase {phase_name} ({action_value:+.4f}): "
+            f"target={target_pos:.4f} rad, "
+            f"baseline={baseline_pos:.4f} rad, "
+            f"final={final_pos:.4f} rad, "
+            f"final_delta={final_delta:+.4f} rad, "
+            f"delta_range=[{delta_min:+.4f}, {delta_max:+.4f}] rad, "
+            f"final_vel={final_vel:+.4f} rad/s, "
+            f"|vel|_max={vel_abs_max:.4f} rad/s, "
+            f"|torque|_max={torque_abs_max:.4f} Nm, "
+            f"torque_ratio_max={torque_ratio_max:.3f}, "
+            f"limit_margin_min={limit_margin_min:.4f} rad, "
+            f"direction_match={direction_match}, "
+            f"done={done_desc}"
+        )
+
+
 def main(args):
     env_cfg, _ = task_registry.get_cfgs(name=args.task)
     _disable_task_motion(env_cfg)
@@ -133,6 +278,12 @@ def main(args):
     torque_override = None
     if args.override_effort_limit is not None:
         torque_override = _override_effort_limit(env, float(args.override_effort_limit))
+    if args.step_joint is not None:
+        _run_joint_step_response(env, args, torque_override)
+        if env.viewer is not None:
+            env.gym.destroy_viewer(env.viewer)
+        env.gym.destroy_sim(env.sim)
+        return
     env.reset()
 
     horizon_steps = int(env.max_episode_length)
@@ -263,22 +414,7 @@ def main(args):
     survived_mask = first_done_step < 0
     failed_mask = ~survived_mask
 
-    print("=" * 80)
-    print(f"Zero-action stability check for task '{args.task}'")
-    print(
-        "Mode: "
-        f"fix_base_link={bool(getattr(env.cfg.asset, 'fix_base_link', False))}, "
-        f"headless={bool(args.headless)}, "
-        f"override_effort_limit={args.override_effort_limit if args.override_effort_limit is not None else 'None'}"
-    )
-    if torque_override is not None:
-        original_min, original_max = torque_override
-        print(
-            "Effort limit override: "
-            f"original_min={original_min:.4f} Nm, "
-            f"original_max={original_max:.4f} Nm, "
-            f"new_limit={float(args.override_effort_limit):.4f} Nm"
-        )
+    _print_mode_header("Zero-action stability check", env, args, torque_override)
     print(
         f"Evaluated {env.num_envs} envs for {horizon_steps} policy steps "
         f"({horizon_steps * env.dt:.2f}s)"
