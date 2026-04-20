@@ -94,6 +94,14 @@ class BruceRoughCfg(LeggedRobotCfg):
         terminate_after_contacts_on = ["base_link"]
         self_collisions = 0  # 1 to disable, 0 to enable...bitwise filter
         flip_visual_attachments = False
+        # Add a small rotor inertia proxy to reduce high-frequency distal chatter.
+        armature = 0.01
+
+    class sim(LeggedRobotCfg.sim):
+        substeps = 2
+
+        class physx(LeggedRobotCfg.sim.physx):
+            num_velocity_iterations = 2
 
     class rewards(LeggedRobotCfg.rewards):
         soft_dof_pos_limit = 0.9

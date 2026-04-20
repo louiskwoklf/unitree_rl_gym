@@ -79,6 +79,14 @@ class BruceStandCfg(LeggedRobotCfg):
         terminate_after_contacts_on = ["base_link"]
         self_collisions = 1
         flip_visual_attachments = False
+        # Add a small rotor inertia proxy to reduce high-frequency distal chatter.
+        armature = 0.01
+
+    class sim(LeggedRobotCfg.sim):
+        substeps = 2
+
+        class physx(LeggedRobotCfg.sim.physx):
+            num_velocity_iterations = 2
 
     class rewards(LeggedRobotCfg.rewards):
         only_positive_rewards = True
